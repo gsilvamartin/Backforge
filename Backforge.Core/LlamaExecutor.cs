@@ -6,7 +6,6 @@ using System.Text;
 using Backforge.Core.Enum;
 using Backforge.Core.Exceptions;
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Logging;
 using ILogger = Backforge.Core.Interfaces.ILogger;
 
 namespace Backforge.Core;
@@ -17,22 +16,26 @@ namespace Backforge.Core;
 public class LlamaExecutor : ILlamaExecutor, IDisposable
 {
     #region Constantes
-    private const string USER_PREFIX = "Usuário:";
-    private const string ASSISTANT_PREFIX = "Assistente:";
-    private const int DEFAULT_MAX_TOKENS = 2048;
-    private const int DEFAULT_CONTEXT_SIZE = 2048;
-    private const int MAX_RETRY_ATTEMPTS = 3;
-    private const int PROGRESS_LOG_INTERVAL = 50;
-    private const int RESPONSE_MIN_LENGTH_FOR_REPETITION_CHECK = 100;
-    private const int LOG_TRUNCATE_LENGTH = 50;
-    private const int MIN_BACKOFF_DELAY_MS = 1000;
-    private const int MAX_JITTER_MS = 500;
-    private const int MIN_TOKENS_PER_CHUNK = 5;
-    private const double TEMPERATURE_DEFAULT = 0.7;
-    private const double TOP_P_DEFAULT = 0.9;
+
+    private static class Constants
+    {
+        public const string UserPrefix = "Usuário:";
+        public const string AssistantPrefix = "Assistente:";
+        public const int DefaultMaxTokens = 2048;
+        public const int DefaultContextSize = 2048;
+        public const int MaxRetryAttempts = 3;
+        public const int ProgressLogInterval = 50;
+        public const int ResponseMinLengthForRepetitionCheck = 100;
+        public const int LogTruncateLength = 50;
+        public const int MinBackoffDelayMs = 1000;
+        public const int MaxJitterMs = 500;
+        public const int MinTokensPerChunk = 5;
+    }
+
     #endregion
 
     #region Campos privados
+
     private readonly SessionContext _sessionContext;
     private readonly ILogger _logger;
     private InteractiveExecutor? _executor;
@@ -46,19 +49,21 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     private readonly SemaphoreSlim _executionLock = new(1, 1);
     private int _tokenCount = 0;
     private DateTime _startTime;
+
     #endregion
 
     #region Propriedades públicas
+
     /// <summary>
     /// Obtém o status atual do executor
     /// </summary>
     public ExecutorStatus Status { get; private set; } = ExecutorStatus.Ready;
-    
+
     /// <summary>
     /// Indica se o modelo está carregado e pronto para uso
     /// </summary>
     public bool IsModelLoaded => _llamaContext != null && _executor != null && !_disposed;
-    
+
     /// <summary>
     /// Obtém a configuração do modelo
     /// </summary>
@@ -67,23 +72,28 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     /// <summary>
     /// Obtém o número aproximado de tokens processados por segundo
     /// </summary>
-    public double TokensPerSecond => _tokenCount > 0 && _startTime != default ? 
-        _tokenCount / Math.Max(0.001, (DateTime.UtcNow - _startTime).TotalSeconds) : 0;
+    public double TokensPerSecond => _tokenCount > 0 && _startTime != default
+        ? _tokenCount / Math.Max(0.001, (DateTime.UtcNow - _startTime).TotalSeconds)
+        : 0;
+
     #endregion
 
     #region Eventos
+
     /// <summary>
     /// Evento disparado quando o progresso da geração é atualizado
     /// </summary>
     public event EventHandler<InferenceProgressEventArgs>? ProgressUpdated;
-    
+
     /// <summary>
     /// Evento disparado quando uma resposta parcial está disponível
     /// </summary>
     public event EventHandler<PartialResponseEventArgs>? PartialResponseAvailable;
+
     #endregion
 
     #region Construtor
+
     /// <summary>
     /// Construtor com injeção de dependências
     /// </summary>
@@ -98,34 +108,100 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
         _modelConfig = config ?? throw new ArgumentNullException(nameof(config));
         _patternDetectorFactory = patternDetectorFactory ?? new DefaultPatternDetectorFactory();
 
-        _affirmativeResponses = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        
-        // Inicializa respostas afirmativas
-        foreach (var response in new[] 
-        {
-            "true", "sim", "yes", "verdadeiro", "correto", "afirmativo", "concordo", "certo"
-        })
-        {
-            _affirmativeResponses.TryAdd(response, true);
-        }
-        
-        _completionMarkers = new List<string>
-        {
-            "</fim>",
-            "<fim>",
-            $"{USER_PREFIX}",
-            "Human:",
-            "User:",
-            "Usuário:"
-        };
-
+        _affirmativeResponses = InitializeAffirmativeResponses();
+        _completionMarkers = InitializeCompletionMarkers();
         _inferenceParams = CreateInferenceParams(config);
 
         InitializeModel();
     }
+
     #endregion
 
-    #region Métodos públicos
+    #region Métodos de inicialização
+
+    /// <summary>
+    /// Inicializa o dicionário de respostas afirmativas
+    /// </summary>
+    private ConcurrentDictionary<string, bool> InitializeAffirmativeResponses()
+    {
+        var responses = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        string[] affirmativeWords =
+        {
+            "true", "sim", "yes", "verdadeiro", "correto",
+            "afirmativo", "concordo", "certo"
+        };
+
+        foreach (var word in affirmativeWords)
+        {
+            responses.TryAdd(word, true);
+        }
+
+        return responses;
+    }
+
+    /// <summary>
+    /// Inicializa a lista de marcadores de conclusão
+    /// </summary>
+    private List<string> InitializeCompletionMarkers()
+    {
+        return new List<string>
+        {
+            "</fim>",
+            "<fim>",
+            $"{Constants.UserPrefix}",
+            "Human:",
+            "User:",
+            "Usuário:"
+        };
+    }
+
+    /// <summary>
+    /// Cria os parâmetros de inferência baseados na configuração
+    /// </summary>
+    private InferenceParams CreateInferenceParams(ModelConfig config)
+    {
+        return new InferenceParams
+        {
+            TokensKeep = 0,
+            MaxTokens = config.MaxTokens ?? Constants.DefaultMaxTokens,
+            AntiPrompts = ["/n"],
+        };
+    }
+
+    /// <summary>
+    /// Inicializa o modelo LLama
+    /// </summary>
+    private void InitializeModel()
+    {
+        try
+        {
+            _logger.Log($"🔄 Carregando modelo {_modelConfig.ModelPath}...");
+
+            var modelParams = new ModelParams(_modelConfig.ModelPath)
+            {
+                ContextSize = _modelConfig.ContextSize ?? Constants.DefaultContextSize,
+                GpuLayerCount = _modelConfig.GpuLayerCount,
+            };
+
+            var weights = LLamaWeights.LoadFromFile(modelParams);
+            _llamaContext = new LLamaContext(weights, modelParams);
+            _executor = new InteractiveExecutor(_llamaContext);
+
+            _logger.Log($"✅ Modelo carregado com sucesso: {_modelConfig.ModelPath}");
+            Status = ExecutorStatus.Ready;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Erro ao carregar modelo: {ex.Message}", ex);
+            Status = ExecutorStatus.Error;
+            throw new LlamaInitializationException($"Falha ao inicializar o modelo: {ex.Message}", ex);
+        }
+    }
+
+    #endregion
+
+    #region API Pública
+
     /// <summary>
     /// Coleta uma resposta completa do modelo para uma solicitação
     /// </summary>
@@ -160,11 +236,9 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
             Status = ExecutorStatus.Processing;
             _logger.Log($"Processando solicitação: {TruncateForLogging(request)}");
 
-            // Formata e adiciona a mensagem do usuário ao contexto
+            // Prepara o prompt e contexto
             string formattedRequest = FormatUserMessage(request);
             _sessionContext.AddUserMessage(formattedRequest);
-
-            // Constrói o prompt completo com o histórico
             string fullPrompt = _sessionContext.BuildFormattedChatPrompt();
             _logger.Log($"Prompt completo construído: {fullPrompt.Length} caracteres");
 
@@ -174,7 +248,7 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
                 cancellationToken);
 
             // Adiciona a resposta ao histórico
-            _sessionContext.AddAssistantResponse($"{ASSISTANT_PREFIX} {response}");
+            _sessionContext.AddAssistantResponse($"{Constants.AssistantPrefix} {response}");
 
             Status = ExecutorStatus.Ready;
             _logger.Log($"Resposta gerada: {TruncateForLogging(response)}");
@@ -236,88 +310,9 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
         }
     }
 
-    /// <summary>
-    /// Libera os recursos do executor
-    /// </summary>
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
     #endregion
 
-    #region Métodos protegidos
-    /// <summary>
-    /// Método protegido para liberação de recursos
-    /// </summary>
-    protected virtual void Dispose(bool disposing)
-    {
-        if (!_disposed)
-        {
-            if (disposing)
-            {
-                _logger.Log("Liberando recursos do LlamaExecutor");
-                _llamaContext?.Dispose();
-                _executionLock.Dispose();
-            }
-
-            _executor = null;
-            _llamaContext = null;
-            _disposed = true;
-        }
-    }
-    #endregion
-
-    #region Métodos privados
-    /// <summary>
-    /// Reinicia o estado da inferência
-    /// </summary>
-    private void ResetInferenceState()
-    {
-        _tokenCount = 0;
-        _startTime = DateTime.UtcNow;
-    }
-    
-    /// <summary>
-    /// Inicializa o modelo LLama
-    /// </summary>
-    private void InitializeModel()
-    {
-        try
-        {
-            _logger.Log($"🔄 Carregando modelo {_modelConfig.ModelPath}...");
-
-            var modelParams = new ModelParams(_modelConfig.ModelPath)
-            {
-                ContextSize = _modelConfig.ContextSize ?? DEFAULT_CONTEXT_SIZE,
-                GpuLayerCount = _modelConfig.GpuLayerCount,
-            };
-
-            var weights = LLamaWeights.LoadFromFile(modelParams);
-            _llamaContext = new LLamaContext(weights, modelParams);
-            _executor = new InteractiveExecutor(_llamaContext);
-
-            _logger.Log($"✅ Modelo carregado com sucesso: {_modelConfig.ModelPath}");
-            Status = ExecutorStatus.Ready;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError($"Erro ao carregar modelo: {ex.Message}", ex);
-            Status = ExecutorStatus.Error;
-            throw new LlamaInitializationException($"Falha ao inicializar o modelo: {ex.Message}", ex);
-        }
-    }
-
-    /// <summary>
-    /// Cria os parâmetros de inferência baseados na configuração
-    /// </summary>
-    private InferenceParams CreateInferenceParams(ModelConfig config)
-    {
-        return new InferenceParams
-        {
-            MaxTokens = config.MaxTokens ?? DEFAULT_MAX_TOKENS,
-        };
-    }
+    #region Métodos de execução
 
     /// <summary>
     /// Executa uma função assíncrona com política de retry
@@ -325,7 +320,7 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     private async Task<string> ExecuteWithRetryAsync(
         Func<Task<string>> operation,
         CancellationToken cancellationToken,
-        int maxRetries = MAX_RETRY_ATTEMPTS)
+        int maxRetries = Constants.MaxRetryAttempts)
     {
         int attempt = 0;
         Exception? lastException = null;
@@ -361,24 +356,13 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     }
 
     /// <summary>
-    /// Calcula o tempo de espera exponencial para retentativas
-    /// </summary>
-    private int CalculateBackoffDelay(int attempt)
-    {
-        // Exponential backoff com jitter para evitar sincronização
-        var baseDelay = MIN_BACKOFF_DELAY_MS * Math.Pow(2, attempt - 1);
-        var jitter = new Random().Next(0, MAX_JITTER_MS);
-        return (int)(baseDelay + jitter);
-    }
-
-    /// <summary>
     /// Gera uma resposta a partir de um prompt
     /// </summary>
     private async Task<string> GenerateResponseAsync(string prompt, CancellationToken cancellationToken)
     {
         if (_executor == null)
             throw new InvalidOperationException("O executor não foi inicializado");
-            
+
         var responseBuilder = new StringBuilder();
         var tokenChunk = new StringBuilder();
         var duplicateDetector = _patternDetectorFactory.CreateDuplicateDetector();
@@ -389,88 +373,166 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
 
         await foreach (var token in _executor.InferAsync(prompt, _inferenceParams).WithCancellation(cancellationToken))
         {
-            // Verifica se o token está se repetindo excessivamente
-            if (duplicateDetector.IsDuplicate(token))
-                continue;
+            ProcessToken(
+                token,
+                responseBuilder,
+                tokenChunk,
+                duplicateDetector,
+                repetitionDetector,
+                maxTokens,
+                cancellationToken);
 
-            responseBuilder.Append(token);
-            tokenChunk.Append(token);
-            _tokenCount++;
-
-            // Notificação de progresso em intervalos
-            if (_tokenCount % PROGRESS_LOG_INTERVAL == 0 || _tokenCount == 1)
-            {
-                _logger.Log($"Gerados {_tokenCount} tokens até o momento");
-                
-                // Notifica progresso aos assinantes
-                ProgressUpdated?.Invoke(this, new InferenceProgressEventArgs
-                {
-                    TokensGenerated = _tokenCount,
-                    MaxTokens = maxTokens,
-                    PercentComplete = (_tokenCount / (double)maxTokens) * 100,
-                    TokensPerSecond = TokensPerSecond
-                });
-            }
-
-            // Envio de chunks para assinantes
-            if (tokenChunk.Length >= MIN_TOKENS_PER_CHUNK)
-            {
-                PartialResponseAvailable?.Invoke(this, new PartialResponseEventArgs
-                {
-                    PartialContent = tokenChunk.ToString(),
-                    IsComplete = false
-                });
-                
-                tokenChunk.Clear();
-            }
-
-            // Verifica se atingimos o limite de tokens
-            if (maxTokens > 0 && _tokenCount >= maxTokens)
-            {
-                _logger.Log($"⚠️ Resposta truncada após atingir limite de tokens");
+            // Verifica condições de parada
+            if (ShouldStopGeneration(responseBuilder.ToString(), maxTokens))
                 break;
-            }
-
-            // Verifica se a resposta está em loop de repetição
-            string currentResponse = responseBuilder.ToString();
-            if (currentResponse.Length > RESPONSE_MIN_LENGTH_FOR_REPETITION_CHECK && 
-                repetitionDetector.IsRepeating(currentResponse))
-            {
-                _logger.Log("⚠️ Detectada repetição na resposta - interrompendo geração");
-                break;
-            }
-
-            // Verifica se a resposta já está completa
-            if (IsResponseComplete(currentResponse))
-            {
-                _logger.Log("✅ Resposta completa detectada - finalizando geração");
-                break;
-            }
         }
 
-        // Envio do chunk final se existir
+        // Processa o chunk final se existir
         if (tokenChunk.Length > 0)
         {
-            PartialResponseAvailable?.Invoke(this, new PartialResponseEventArgs
-            {
-                PartialContent = tokenChunk.ToString(),
-                IsComplete = true
-            });
+            NotifyPartialResponse(tokenChunk.ToString(), true);
         }
 
         LogPerformanceMetrics(_startTime, _tokenCount);
 
         var finalResponse = CleanupResponse(responseBuilder.ToString().Trim());
-        
-        // Notifica que a resposta está completa
+        NotifyFinalResponse(finalResponse);
+
+        return finalResponse;
+    }
+
+    /// <summary>
+    /// Processa um token individual durante a geração
+    /// </summary>
+    private void ProcessToken(
+        string token,
+        StringBuilder responseBuilder,
+        StringBuilder tokenChunk,
+        IDuplicateDetector duplicateDetector,
+        IRepetitionDetector repetitionDetector,
+        int maxTokens,
+        CancellationToken cancellationToken)
+    {
+        // Ignora tokens duplicados
+        if (duplicateDetector.IsDuplicate(token))
+            return;
+
+        responseBuilder.Append(token);
+        tokenChunk.Append(token);
+        _tokenCount++;
+
+        // Notificação de progresso em intervalos
+        if (_tokenCount % Constants.ProgressLogInterval == 0 || _tokenCount == 1)
+        {
+            NotifyProgress(maxTokens);
+        }
+
+        // Envio de chunks para assinantes
+        if (tokenChunk.Length >= Constants.MinTokensPerChunk)
+        {
+            NotifyPartialResponse(tokenChunk.ToString(), false);
+            tokenChunk.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Verifica se a geração deve ser interrompida
+    /// </summary>
+    private bool ShouldStopGeneration(string currentResponse, int maxTokens)
+    {
+        // Verifica se atingimos o limite de tokens
+        if (maxTokens > 0 && _tokenCount >= maxTokens)
+        {
+            _logger.Log($"⚠️ Resposta truncada após atingir limite de tokens");
+            return true;
+        }
+
+        // Verifica se a resposta está em loop de repetição
+        if (currentResponse.Length > Constants.ResponseMinLengthForRepetitionCheck &&
+            _patternDetectorFactory.CreateRepetitionDetector().IsRepeating(currentResponse))
+        {
+            _logger.Log("⚠️ Detectada repetição na resposta - interrompendo geração");
+            return true;
+        }
+
+        // Verifica se a resposta já está completa
+        if (IsResponseComplete(currentResponse))
+        {
+            _logger.Log("✅ Resposta completa detectada - finalizando geração");
+            return true;
+        }
+
+        return false;
+    }
+
+    #endregion
+
+    #region Métodos de notificação
+
+    /// <summary>
+    /// Notifica os ouvintes sobre o progresso da geração
+    /// </summary>
+    private void NotifyProgress(int maxTokens)
+    {
+        _logger.Log($"Gerados {_tokenCount} tokens até o momento");
+
+        ProgressUpdated?.Invoke(this, new InferenceProgressEventArgs
+        {
+            TokensGenerated = _tokenCount,
+            MaxTokens = maxTokens,
+            PercentComplete = (_tokenCount / (double)maxTokens) * 100,
+            TokensPerSecond = TokensPerSecond
+        });
+    }
+
+    /// <summary>
+    /// Notifica os ouvintes sobre uma resposta parcial
+    /// </summary>
+    private void NotifyPartialResponse(string content, bool isComplete, bool isFinal = false)
+    {
         PartialResponseAvailable?.Invoke(this, new PartialResponseEventArgs
         {
-            PartialContent = finalResponse,
+            PartialContent = content,
+            IsComplete = isComplete,
+            IsFinal = isFinal
+        });
+    }
+
+    /// <summary>
+    /// Notifica os ouvintes sobre a resposta final
+    /// </summary>
+    private void NotifyFinalResponse(string finalContent)
+    {
+        PartialResponseAvailable?.Invoke(this, new PartialResponseEventArgs
+        {
+            PartialContent = finalContent,
             IsComplete = true,
             IsFinal = true
         });
-        
-        return finalResponse;
+    }
+
+    #endregion
+
+    #region Métodos utilitários
+
+    /// <summary>
+    /// Reinicia o estado da inferência
+    /// </summary>
+    private void ResetInferenceState()
+    {
+        _tokenCount = 0;
+        _startTime = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Calcula o tempo de espera exponencial para retentativas
+    /// </summary>
+    private int CalculateBackoffDelay(int attempt)
+    {
+        // Exponential backoff com jitter para evitar sincronização
+        var baseDelay = Constants.MinBackoffDelayMs * Math.Pow(2, attempt - 1);
+        var jitter = new Random().Next(0, Constants.MaxJitterMs);
+        return (int)(baseDelay + jitter);
     }
 
     /// <summary>
@@ -490,8 +552,8 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     private bool IsResponseComplete(string response)
     {
         // Verifica todos os marcadores de finalização conhecidos
-        return _completionMarkers.Any(marker => 
-            response.EndsWith(marker, StringComparison.OrdinalIgnoreCase) || 
+        return _completionMarkers.Any(marker =>
+            response.EndsWith(marker, StringComparison.OrdinalIgnoreCase) ||
             response.Contains(marker, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -500,9 +562,9 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     /// </summary>
     private string FormatUserMessage(string message)
     {
-        return message.StartsWith(USER_PREFIX, StringComparison.OrdinalIgnoreCase)
+        return message.StartsWith(Constants.UserPrefix, StringComparison.OrdinalIgnoreCase)
             ? message
-            : $"{USER_PREFIX} {message}";
+            : $"{Constants.UserPrefix} {message}";
     }
 
     /// <summary>
@@ -515,18 +577,24 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
             .ToLowerInvariant()
             .Trim()
             .TrimEnd('.', '!', '?');
-            
+
         // Verificação exata
         if (_affirmativeResponses.ContainsKey(normalized))
             return true;
-            
+
         // Verificação parcial - se resposta contém termos afirmativos
-        return _affirmativeResponses.Keys.Any(term => 
+        return _affirmativeResponses.Keys.Any(term =>
             normalized.Contains(term, StringComparison.OrdinalIgnoreCase) &&
-            !normalized.Contains("não", StringComparison.OrdinalIgnoreCase) &&
-            !normalized.Contains("not", StringComparison.OrdinalIgnoreCase) &&
-            !normalized.Contains("falso", StringComparison.OrdinalIgnoreCase) &&
-            !normalized.Contains("false", StringComparison.OrdinalIgnoreCase));
+            !ContainsNegation(normalized));
+    }
+
+    /// <summary>
+    /// Verifica se uma string contém termos de negação
+    /// </summary>
+    private bool ContainsNegation(string text)
+    {
+        string[] negationTerms = { "não", "not", "falso", "false" };
+        return negationTerms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -535,8 +603,8 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     private string CleanupResponse(string response)
     {
         // Remove prefixo do assistente se presente
-        if (response.StartsWith(ASSISTANT_PREFIX, StringComparison.OrdinalIgnoreCase))
-            response = response[ASSISTANT_PREFIX.Length..].Trim();
+        if (response.StartsWith(Constants.AssistantPrefix, StringComparison.OrdinalIgnoreCase))
+            response = response[Constants.AssistantPrefix.Length..].Trim();
 
         // Remove qualquer mensagem do usuário que possa ter sido gerada ao final
         foreach (var prefix in _completionMarkers.Where(m => m.EndsWith(":")))
@@ -549,7 +617,7 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
             }
         }
 
-        // Remove tags de marcação (se houver)
+        // Remove tags de marcação
         response = RemoveMarkupTags(response);
 
         return response;
@@ -565,7 +633,7 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
         {
             response = response.Replace(tag, "", StringComparison.OrdinalIgnoreCase);
         }
-        
+
         return response;
     }
 
@@ -574,10 +642,10 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     /// </summary>
     private string TruncateForLogging(string text)
     {
-        if (string.IsNullOrEmpty(text) || text.Length <= LOG_TRUNCATE_LENGTH)
+        if (string.IsNullOrEmpty(text) || text.Length <= Constants.LogTruncateLength)
             return text;
 
-        return text[..LOG_TRUNCATE_LENGTH] + "...";
+        return text[..Constants.LogTruncateLength] + "...";
     }
 
     /// <summary>
@@ -599,17 +667,49 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
 
         if (_disposed)
             throw new ObjectDisposedException(nameof(LlamaExecutor), "O executor foi descartado e não pode ser usado");
-            
+
         // Tentativa de reinicializar se necessário
         if (!IsModelLoaded)
         {
             await ReloadModelIfNeededAsync(cancellationToken);
-            
+
             if (!IsModelLoaded)
                 throw new InvalidOperationException("Não foi possível inicializar o modelo após tentativas de recarga");
         }
     }
+
     #endregion
+
+    #region IDisposable
+
+    /// <summary>
+    /// Libera os recursos do executor
+    /// </summary>
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Método protegido para liberação de recursos
+    /// </summary>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (!_disposed)
+        {
+            if (disposing)
+            {
+                _logger.Log("Liberando recursos do LlamaExecutor");
+                _llamaContext?.Dispose();
+                _executionLock.Dispose();
+            }
+
+            _executor = null;
+            _llamaContext = null;
+            _disposed = true;
+        }
+    }
 
     /// <summary>
     /// Destrutor
@@ -618,4 +718,6 @@ public class LlamaExecutor : ILlamaExecutor, IDisposable
     {
         Dispose(false);
     }
+
+    #endregion
 }

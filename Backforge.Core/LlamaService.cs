@@ -1,18 +1,15 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Diagnostics;
-using System.Text.Json;
-using Backforge.Core;
+﻿using System.Diagnostics;
+using Backforge.Core.Enum;
 using Backforge.Core.Interfaces;
 using Backforge.Core.Models;
-using LLama;
 
-public class LlamaService
+namespace Backforge.Core;
+
+/// <summary>
+/// Serviço responsável por gerenciar a execução de tarefas utilizando o modelo LLama,
+/// com recursos de agente para executar comandos, instalar dependências e gerenciar projetos.
+/// </summary>
+public class LlamaService : IDisposable
 {
     private readonly ModelConfig _modelConfig;
     private readonly ILlamaExecutor _executor;
@@ -21,114 +18,230 @@ public class LlamaService
     private readonly IFileManager _fileManager;
     private readonly ILogger _logger;
     private readonly IDocumentationGenerator _docGenerator;
+    private readonly ICommandExecutor _commandExecutor;
+    private readonly IDependencyManager _dependencyManager;
     private readonly SessionContext _sessionContext;
+    private readonly ICodeGenerationProcessor _codeGenerationProcessor;
+    private readonly ICommandExecutionProcessor _commandExecutionProcessor;
+    private readonly IDependencyInstallationProcessor _dependencyInstallationProcessor;
+    private readonly IProjectSetupProcessor _projectSetupProcessor;
 
     private bool _isRunning;
     private readonly Stopwatch _executionTimer = new();
+    private bool _disposed;
+    private readonly SemaphoreSlim _executionLock = new(1, 1);
 
+    /// <summary>
+    /// Obtém um valor que indica se o serviço está executando uma tarefa.
+    /// </summary>
+    public bool IsRunning => _isRunning;
+
+    /// <summary>
+    /// Inicializa uma nova instância da classe LlamaService.
+    /// </summary>
+    /// <param name="modelPath">Caminho para o arquivo do modelo.</param>
+    /// <param name="outputDir">Diretório de saída para os arquivos gerados.</param>
+    /// <param name="contextLimit">Limite de contexto para a sessão.</param>
+    /// <param name="maxTokens">Número máximo de tokens para processamento.</param>
+    /// <param name="enableCommandExecution">Habilita execução de comandos no sistema.</param>
     public LlamaService(
         string modelPath,
         string outputDir = "GeneratedFiles",
         int contextLimit = 10,
-        int maxTokens = 4096)
+        int maxTokens = 4096,
+        bool enableCommandExecution = false)
     {
-        _modelConfig = new ModelConfig(modelPath, maxTokens);
-        _logger = new FileLogger(Path.Combine(outputDir, "execution_log.txt"));
+        _modelConfig = new ModelConfig(modelPath, maxTokens) ?? throw new ArgumentNullException(nameof(modelPath));
+        _logger = new FileLogger(System.IO.Path.Combine(outputDir, "execution_log.txt"));
         _fileManager = new FileManager(outputDir, _logger);
         _sessionContext = new SessionContext(contextLimit);
         _executor = new LlamaExecutor(_modelConfig, _sessionContext, _logger);
         _analyzer = new ProgramAnalyzer(_executor);
         _codeGenerator = new CodeGenerator(_executor, _logger);
         _docGenerator = new DocumentationGenerator(_executor, _fileManager);
+        _commandExecutor = new CommandExecutor(_logger, enableCommandExecution);
+        _dependencyManager = new DependencyManager(_commandExecutor, _logger);
 
-        _logger.Log("✅ Service initialized successfully!");
+        // Inicializar os processadores
+        _codeGenerationProcessor = new CodeGenerationProcessor(
+            _codeGenerator, _docGenerator, _fileManager, _logger);
+
+        _commandExecutionProcessor = new CommandExecutionProcessor(
+            _commandExecutor, _executor, _logger);
+
+        _dependencyInstallationProcessor = new DependencyInstallationProcessor(
+            _dependencyManager, _executor, _logger);
+
+        _projectSetupProcessor = new ProjectSetupProcessor(
+            _executor, _fileManager, _commandExecutor, _dependencyManager,
+            _codeGenerationProcessor, _docGenerator, _logger);
+
+        _logger.Log("✅ Serviço inicializado com sucesso!");
     }
 
-    public async Task<ExecutionResult> ExecuteTaskAsync(string userRequest, string language = "C#",
-        bool validateCode = true)
+    /// <summary>
+    /// Executa uma tarefa com base na solicitação do usuário.
+    /// </summary>
+    /// <param name="userRequest">Solicitação do usuário.</param>
+    /// <param name="language">Linguagem de programação desejada.</param>
+    /// <param name="validateCode">Indica se o código deve ser validado.</param>
+    /// <param name="executeCommands">Indica se comandos podem ser executados.</param>
+    /// <param name="installDependencies">Indica se dependências podem ser instaladas.</param>
+    /// <param name="cancellationToken">Token de cancelamento para interromper a operação.</param>
+    /// <returns>Resultado da execução da tarefa.</returns>
+    public async Task<ExecutionResult> ExecuteTaskAsync(
+        string userRequest,
+        string language = "C#",
+        bool validateCode = true,
+        bool executeCommands = false,
+        bool installDependencies = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(userRequest))
+            throw new ArgumentException("A solicitação do usuário não pode ser vazia.", nameof(userRequest));
+
+        LogRequestDetails(userRequest, language, validateCode, executeCommands, installDependencies);
+
+        // Usar SemaphoreSlim para evitar execuções concorrentes
+        if (!await _executionLock.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken))
+        {
+            return new ExecutionResult
+            {
+                Success = false,
+                Message = "Uma tarefa já está em execução. Aguarde a conclusão ou tente novamente mais tarde."
+            };
+        }
+
+        try
+        {
+            _isRunning = true;
+            _executionTimer.Restart();
+
+            var result = new ExecutionResult
+            {
+                RequestTimestamp = DateTime.Now,
+                Request = userRequest,
+                Language = language
+            };
+
+            return await ProcessExecutionAsync(
+                result,
+                userRequest,
+                language,
+                validateCode,
+                executeCommands,
+                installDependencies,
+                cancellationToken);
+        }
+        finally
+        {
+            _isRunning = false;
+            _executionLock.Release();
+        }
+    }
+
+    private void LogRequestDetails(
+        string userRequest,
+        string language,
+        bool validateCode,
+        bool executeCommands,
+        bool installDependencies)
     {
         _logger.Log("Iniciando execução...");
         _logger.Log("Detalhes da solicitação:");
         _logger.Log($"- Usuário: {userRequest}");
         _logger.Log($"- Linguagem: {language}");
         _logger.Log($"- Validar código: {validateCode}");
-        
-        if (_isRunning)
-        {
-            return new ExecutionResult
-            {
-                Success = false,
-                Message = "Uma tarefa já está em execução. Aguarde a conclusão."
-            };
-        }
+        _logger.Log($"- Executar comandos: {executeCommands}");
+        _logger.Log($"- Instalar dependências: {installDependencies}");
+    }
 
-        _isRunning = true;
-        _executionTimer.Restart();
-
-        var result = new ExecutionResult
-        {
-            RequestTimestamp = DateTime.Now,
-            Request = userRequest,
-            Language = language
-        };
-
+    private async Task<ExecutionResult> ProcessExecutionAsync(
+        ExecutionResult result,
+        string userRequest,
+        string language,
+        bool validateCode,
+        bool executeCommands,
+        bool installDependencies,
+        CancellationToken cancellationToken)
+    {
         try
         {
             _logger.Log($"📌 Nova requisição: \"{StringUtils.TruncateString(userRequest, 100)}\"");
             _sessionContext.AddToHistory($"Usuário: {userRequest}");
 
-            // Step 1: Analyze request
+            // Passo 1: Analisar solicitação
             var analysis = await _analyzer.AnalyzeRequestAsync(userRequest);
-            _logger.Log($"Análise: Complexidade={analysis.Complexity}, " +
-                        $"Programação={analysis.IsProgrammingRelated}, Domínio={analysis.Domain}");
+            LogAnalysisResults(analysis);
 
             result.Complexity = analysis.Complexity;
             result.Domain = analysis.Domain;
+            result.RequestType = analysis.RequestType;
 
-            if (!analysis.IsProgrammingRelated)
+            if (analysis.RequestType == RequestType.Unknown && !analysis.IsProgrammingRelated)
             {
-                string message = "A requisição não parece ser relacionada à programação.";
+                const string message =
+                    "A requisição não parece ser relacionada à programação ou a uma tarefa suportada.";
                 _logger.Log($"⚠️ {message}");
                 result.Success = false;
                 result.Message = message;
                 return result;
             }
 
-            // Step 2: Break down into steps
-            _logger.Log("🤖 Gerando passos da solução...");
-            var steps = await _codeGenerator.GenerateStepsAsync(userRequest, analysis.Complexity);
-            _logger.Log($"📜 {steps.Count} passos gerados");
+            cancellationToken.ThrowIfCancellationRequested();
 
-            result.Steps = steps;
-            var generatedFiles = new List<GeneratedFile>();
-
-            // Step 3: Process each step
-            foreach (var step in steps)
+            // Passo 2: Identificar ação principal
+            switch (analysis.RequestType)
             {
-                var stepResult = await ProcessStepAsync(step, language, validateCode);
-                if (stepResult.Success)
-                {
-                    generatedFiles.Add(stepResult);
-                }
-                else
-                {
-                    result.Errors.Add($"Erro no passo '{step}': {stepResult.ErrorMessage}");
-                }
-            }
+                case RequestType.CodeGeneration:
+                    return await _codeGenerationProcessor.ProcessAsync(
+                        result, userRequest, language, validateCode, cancellationToken);
 
-            result.Files = generatedFiles;
-            result.Success = generatedFiles.Count > 0;
-            result.Message = result.Success
-                ? $"Tarefa concluída com sucesso. {generatedFiles.Count} arquivos gerados."
-                : "Não foi possível gerar todos os arquivos necessários.";
+                case RequestType.CommandExecution:
+                    if (!executeCommands)
+                    {
+                        result.Success = false;
+                        result.Message = "Execução de comandos não está habilitada nas configurações.";
+                        return result;
+                    }
 
-            // Step 4: Generate documentation
-            if (result.Success)
-            {
-                string docFileName = await _docGenerator.GenerateDocumentationAsync(
-                    userRequest, steps, generatedFiles);
-                result.Documentation = docFileName;
+                    return await _commandExecutionProcessor.ProcessAsync(
+                        result, userRequest, analysis, cancellationToken);
+
+                case RequestType.DependencyInstallation:
+                    if (!installDependencies)
+                    {
+                        result.Success = false;
+                        result.Message = "Instalação de dependências não está habilitada nas configurações.";
+                        return result;
+                    }
+
+                    return await _dependencyInstallationProcessor.ProcessAsync(
+                        result, userRequest, analysis, cancellationToken);
+
+                case RequestType.ProjectSetup:
+                    if (!executeCommands)
+                    {
+                        result.Success = false;
+                        result.Message =
+                            "Configuração de projeto requer execução de comandos, que não está habilitada.";
+                        return result;
+                    }
+
+                    return await _projectSetupProcessor.ProcessAsync(
+                        result, userRequest, language, executeCommands, installDependencies, cancellationToken);
+
+                default:
+                    // Tratamento padrão para solicitações não categorizadas: geração de código
+                    return await _codeGenerationProcessor.ProcessAsync(
+                        result, userRequest, language, validateCode, cancellationToken);
             }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.Log("⚠️ Operação cancelada pelo usuário");
+            result.Success = false;
+            result.Message = "Operação cancelada pelo usuário.";
         }
         catch (Exception ex)
         {
@@ -141,69 +254,46 @@ public class LlamaService
             _executionTimer.Stop();
             result.ExecutionTimeMs = _executionTimer.ElapsedMilliseconds;
             _logger.Log($"⏱️ Tempo total de execução: {result.ExecutionTimeMs}ms");
-            _isRunning = false;
 
-            // Save execution result
+            // Salvar resultado da execução
             _fileManager.SaveExecutionResult(result);
         }
 
         return result;
     }
 
-    private async Task<GeneratedFile> ProcessStepAsync(string step, string language, bool validateCode)
+    private void LogAnalysisResults(RequestAnalysis analysis)
     {
-        _logger.Log($"🚀 Processando: \"{step}\"");
-        var result = new GeneratedFile
+        _logger.Log($"Análise: Complexidade={analysis.Complexity}, " +
+                    $"Programação={analysis.IsProgrammingRelated}, " +
+                    $"Tipo={analysis.RequestType}, " +
+                    $"Domínio={analysis.Domain}");
+    }
+
+    /// <summary>
+    /// Libera os recursos utilizados pelo serviço.
+    /// </summary>
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Libera os recursos utilizados pelo serviço.
+    /// </summary>
+    /// <param name="disposing">Indica se está liberando recursos gerenciados.</param>
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        if (disposing)
         {
-            Step = step,
-            Language = language
-        };
-
-        try
-        {
-            // Generate code for this step
-            var code = await _codeGenerator.GenerateCodeAsync(step, language);
-
-            if (string.IsNullOrWhiteSpace(code))
-            {
-                result.Success = false;
-                result.ErrorMessage = "Código gerado vazio";
-                return result;
-            }
-
-            // Validate and fix code if needed
-            if (validateCode && _codeGenerator.NeedsValidation(language))
-            {
-                _logger.Log("🔍 Validando código gerado...");
-                var validationResult = await _codeGenerator.ValidateCodeAsync(code, language);
-
-                if (!validationResult.IsValid)
-                {
-                    _logger.Log($"⚠️ Problemas detectados no código");
-
-                    if (validationResult.Issues.Any(i => i.Severity == "error"))
-                    {
-                        _logger.Log("🔄 Tentando corrigir o código...");
-                        code = await _codeGenerator.FixCodeIssuesAsync(code, validationResult.Issues, language);
-                    }
-                }
-            }
-
-            // Save file to disk
-            var filePath = _fileManager.SaveToFile(step, code, language);
-
-            result.Success = true;
-            result.FilePath = filePath;
-            result.Code = code;
-
-            return result;
+            _executionLock?.Dispose();
+            (_executor as IDisposable)?.Dispose();
+            (_commandExecutor as IDisposable)?.Dispose();
         }
-        catch (Exception ex)
-        {
-            _logger.LogError($"Erro ao processar etapa '{step}'", ex);
-            result.Success = false;
-            result.ErrorMessage = ex.Message;
-            return result;
-        }
+
+        _disposed = true;
     }
 }

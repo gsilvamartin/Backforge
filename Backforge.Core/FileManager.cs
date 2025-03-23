@@ -98,6 +98,11 @@ public class FileManager : IFileManager
         }
     }
 
+    public void CreateDirectory(string path)
+    {
+        Directory.CreateDirectory(path);
+    }
+
     private void EnsureDirectoryExists(string directory)
     {
         if (!Directory.Exists(directory))
