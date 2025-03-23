@@ -3,7 +3,7 @@
 public class ModelConfig
 {
     public string ModelPath { get; }
-    public int MaxTokens { get; }
+    public int? MaxTokens { get; }
     public uint? ContextSize { get; }
     public int GpuLayerCount { get; }
 
@@ -11,6 +11,6 @@ public class ModelConfig
     {
         ModelPath = modelPath;
         MaxTokens = maxTokens;
-        GpuLayerCount = SystemUtils.DetectGpu() ? 2 : 0;
+        GpuLayerCount = SystemUtils.DetectGpu() ? 6 : 0;
     }
 }

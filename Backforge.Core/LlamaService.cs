@@ -30,7 +30,7 @@ public class LlamaService
         string modelPath,
         string outputDir = "GeneratedFiles",
         int contextLimit = 10,
-        int maxTokens = 2048)
+        int maxTokens = 4096)
     {
         _modelConfig = new ModelConfig(modelPath, maxTokens);
         _logger = new FileLogger(Path.Combine(outputDir, "execution_log.txt"));
@@ -47,6 +47,12 @@ public class LlamaService
     public async Task<ExecutionResult> ExecuteTaskAsync(string userRequest, string language = "C#",
         bool validateCode = true)
     {
+        _logger.Log("Iniciando execução...");
+        _logger.Log("Detalhes da solicitação:");
+        _logger.Log($"- Usuário: {userRequest}");
+        _logger.Log($"- Linguagem: {language}");
+        _logger.Log($"- Validar código: {validateCode}");
+        
         if (_isRunning)
         {
             return new ExecutionResult
