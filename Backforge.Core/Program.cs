@@ -15,8 +15,13 @@ public class Program
 
         var logger = factory.CreateLogger<RequirementAnalyzer>();
 
+        // var requirement = new RequirementAnalyzer(
+        //     new LlamaService("/Users/guilhermemartin/.ollama/models/blobs/sha256-667b0c1932bc6ffc593ed1d03f895bf2dc8dc6df21db3042284a6f4416b06a29"),
+        //     logger // Usa o logger correto
+        // );
+        
         var requirement = new RequirementAnalyzer(
-            new LlamaService("C:\\Users\\gsilv\\.ollama\\models\\blobs/sha256-3a43f93b78ec50f7c4e4dc8bd1cb3fff5a900e7d574c51a6f7495e48486e0dac"),
+            new LlamaService(),
             logger // Usa o logger correto
         );
 

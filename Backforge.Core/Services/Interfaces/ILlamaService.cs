@@ -2,5 +2,5 @@
 
 public interface ILlamaService
 {
-    Task<string> GetLlamaResponseAsync(string prompt);
+    Task<string> GetLlamaResponseAsync(string prompt, CancellationToken token);
 }
