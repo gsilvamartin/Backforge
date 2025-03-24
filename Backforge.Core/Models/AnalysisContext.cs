@@ -2,20 +2,16 @@
 
 public class AnalysisContext
 {
+    public Guid ContextId { get; set; } = Guid.NewGuid();
     public string UserRequirementText { get; set; }
-    public List<string> ExtractedEntities { get; set; } = new List<string>();
-    public List<string> ExtractedRelationships { get; set; } = new List<string>();
-    public List<string> InferredRequirements { get; set; } = new List<string>();
-    public List<DecisionPoint> Decisions { get; set; } = new List<DecisionPoint>();
-    public Dictionary<string, object> ContextualData { get; set; } = new Dictionary<string, object>();
-    public List<string> AnalysisErrors { get; set; } = new List<string>(); // Novo
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow; // Novo
-        
-    // Novo método para facilitar a verificação do estado
-    public bool IsComplete => 
-        !string.IsNullOrWhiteSpace(UserRequirementText) && 
-        ExtractedEntities.Count > 0 && 
-        ExtractedRelationships.Count > 0;
+    public List<string> ExtractedEntities { get; set; } = new();
+    public List<string> ExtractedRelationships { get; set; } = new();
+    public List<string> InferredRequirements { get; set; } = new();
+    public List<DecisionPoint> Decisions { get; set; } = new();
+    public Dictionary<string, object> ContextualData { get; set; } = new();
+    public List<string> AnalysisErrors { get; set; } = new();
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public string NormalizedText { get; set; }
 }
 
 public class DecisionPoint

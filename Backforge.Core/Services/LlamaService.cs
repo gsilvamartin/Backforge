@@ -1,5 +1,4 @@
-﻿using Backforge.Core.Services.Interfaces;
-using LLama;
+﻿using LLama;
 using LLama.Common;
 using LLama.Native;
 using Ollama;
@@ -47,10 +46,10 @@ public class LlamaService : ILlamaService
     {
         using var ollama = new OllamaApiClient();
 
-        await ollama.Models.PullModelAsync("llama3.1:latest").EnsureSuccessAsync();
+        await ollama.Models.PullModelAsync("codellama:latest").EnsureSuccessAsync();
 
         var res = "";
-        var enumerable = ollama.Completions.GenerateCompletionAsync("llama3.1", prompt, cancellationToken: token);
+        var enumerable = ollama.Completions.GenerateCompletionAsync("codellama", prompt, cancellationToken: token);
         await foreach (var response in enumerable)
         {
             res += response.Response;
