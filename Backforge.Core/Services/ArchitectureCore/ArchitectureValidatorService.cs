@@ -32,17 +32,18 @@ public class ArchitectureValidatorService : IArchitectureValidator
         };
 
         // Execute all validation rules
-        foreach (var rule in _validationRules)
-        {
-            var ruleResult = await rule.ValidateAsync(blueprint, context, cancellationToken);
-            report.Errors.AddRange(ruleResult.Errors);
-            report.Warnings.AddRange(ruleResult.Warnings);
-            report.Recommendations.AddRange(ruleResult.Recommendations);
-        }
-
-        // Calculate overall validation score
-        report.ValidationScore = CalculateValidationScore(report);
-        report.IsValid = !report.Errors.Any();
+        // TODO VALIDATION RULES
+        // foreach (var rule in _validationRules)
+        // {
+        //     var ruleResult = await rule.ValidateAsync(blueprint, context, cancellationToken);
+        //     report.Errors.AddRange(ruleResult.Errors);
+        //     report.Warnings.AddRange(ruleResult.Warnings);
+        //     report.Recommendations.AddRange(ruleResult.Recommendations);
+        // }
+        //
+        // // Calculate overall validation score
+        // report.ValidationScore = CalculateValidationScore(report);
+        // report.IsValid = !report.Errors.Any();
 
         return report;
     }

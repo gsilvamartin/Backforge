@@ -9,9 +9,4 @@ public interface IArchitecturePatternResolver
         AnalysisContext context,
         ArchitectureGenerationOptions options,
         CancellationToken cancellationToken);
-    
-    Task<PatternCompatibilityReport> EvaluatePatternCompatibilityAsync(
-        List<ArchitecturePattern> patterns,
-        AnalysisContext context,
-        CancellationToken cancellationToken);
 }

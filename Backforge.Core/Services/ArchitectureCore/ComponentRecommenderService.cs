@@ -14,7 +14,7 @@ public class ComponentRecommenderService : IComponentRecommender
 
     public ComponentRecommenderService(
         ILlamaService llamaService,
-        ILogger<ComponentRecommenderService> logger )
+        ILogger<ComponentRecommenderService> logger)
     {
         _llamaService = llamaService;
         _logger = logger;
@@ -26,13 +26,8 @@ public class ComponentRecommenderService : IComponentRecommender
         List<ArchitecturePattern> patterns,
         CancellationToken cancellationToken)
     {
-        // 1. Obter componentes base
         var components = await GetBaseComponentsAsync(context, patterns, cancellationToken);
-
-        // 2. Identificar relacionamentos
         var relationships = await IdentifyComponentRelationshipsAsync(components, context, cancellationToken);
-
-        // 3. Identificar interfaces públicas
         var interfaces = await IdentifyPublicInterfacesAsync(components, cancellationToken);
 
         return new ComponentDesignResult
@@ -67,7 +62,7 @@ public class ComponentRecommenderService : IComponentRecommender
         return await _llamaService.GetStructuredResponseAsync<List<ComponentInterface>>(
             prompt, cancellationToken);
     }
-    
+
     private string BuildComponentRecommendationPrompt(
         AnalysisContext context,
         List<ArchitecturePattern> patterns)
@@ -98,55 +93,30 @@ public class ComponentRecommenderService : IComponentRecommender
 
     private List<ComponentArchetype> InitializeComponentArchetypes()
     {
-        return new List<ComponentArchetype>
-        {
+        return
+        [
             new ComponentArchetype { Name = "API Gateway", Type = "Integration" },
             new ComponentArchetype { Name = "Service", Type = "Business" },
             new ComponentArchetype { Name = "Repository", Type = "Data" },
             new ComponentArchetype { Name = "Controller", Type = "API" },
-            new ComponentArchetype { Name = "MessageHandler", Type = "Event" }
-        };
-    }
-    
-    private async Task<List<ArchitectureComponent>> IdentifyBaseComponentsAsync(
-        AnalysisContext context,
-        List<ArchitecturePattern> patterns,
-        CancellationToken cancellationToken)
-    {
-        var prompt = $"""
-                      Identify core components for:
-                      Requirements: {context.UserRequirementText}
-                      Patterns: {string.Join(", ", patterns.Select(p => p.Name))}
-                      Entities: {string.Join(", ", context.ExtractedEntities)}
-
-                      Component Archetypes: {string.Join(", ", _componentArchetypes.Select(a => a.Name))}
-
-                      Return list of base components with:
-                      - Name
-                      - Type
-                      - Responsibility
-                      """;
-
-        return await _llamaService.GetStructuredResponseAsync<List<ArchitectureComponent>>(prompt, cancellationToken);
-    }
-
-    private async Task<List<ArchitectureComponent>> SpecializeComponentsAsync(
-        List<ArchitectureComponent> baseComponents,
-        AnalysisContext context,
-        CancellationToken cancellationToken)
-    {
-        var prompt = $"""
-                      Specialize these components:
-                      Base Components: {JsonSerializer.Serialize(baseComponents)}
-                      Requirements: {context.UserRequirementText}
-
-                      Add:
-                      - Implementation details
-                      - Technology suggestions
-                      - Configuration parameters
-                      """;
-
-        return await _llamaService.GetStructuredResponseAsync<List<ArchitectureComponent>>(prompt, cancellationToken);
+            new ComponentArchetype { Name = "MessageHandler", Type = "Event" },
+            new ComponentArchetype { Name = "Queue", Type = "Event" },
+            new ComponentArchetype { Name = "Scheduler", Type = "Event" },
+            new ComponentArchetype { Name = "Cache", Type = "Data" },
+            new ComponentArchetype { Name = "Database", Type = "Data" },
+            new ComponentArchetype { Name = "Search", Type = "Data" },
+            new ComponentArchetype { Name = "Notification", Type = "Event" },
+            new ComponentArchetype { Name = "Email", Type = "Event" },
+            new ComponentArchetype { Name = "SMS", Type = "Event" },
+            new ComponentArchetype { Name = "Logging", Type = "Utility" },
+            new ComponentArchetype { Name = "Monitoring", Type = "Utility" },
+            new ComponentArchetype { Name = "Security", Type = "Utility" },
+            new ComponentArchetype { Name = "Configuration", Type = "Utility" },
+            new ComponentArchetype { Name = "Caching", Type = "Utility" },
+            new ComponentArchetype { Name = "Queueing", Type = "Utility" },
+            new ComponentArchetype { Name = "Eventing", Type = "Utility" },
+            new ComponentArchetype { Name = "Storage", Type = "Utility" },
+        ];
     }
 
     private async Task<List<ComponentRelationship>> IdentifyComponentRelationshipsAsync(
@@ -167,24 +137,6 @@ public class ComponentRecommenderService : IComponentRecommender
                       """;
 
         return await _llamaService.GetStructuredResponseAsync<List<ComponentRelationship>>(prompt, cancellationToken);
-    }
-
-    private string BuildRecommendationPrompt(
-        AnalysisContext context,
-        List<ArchitecturePattern> patterns)
-    {
-        return $"""
-                Recommend components for:
-                Requirements: {context.UserRequirementText}
-                Patterns: {string.Join(", ", patterns.Select(p => p.Name))}
-                Entities: {string.Join(", ", context.ExtractedEntities)}
-
-                Return list of components with:
-                - Name
-                - Type
-                - Description
-                - Responsibility
-                """;
     }
 
     private class ComponentArchetype

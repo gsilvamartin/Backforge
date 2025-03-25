@@ -21,32 +21,28 @@ public class LayerSeparationRule : IArchitectureRule
     {
         var result = new RuleValidationResult();
 
-        // Use LayerDependency diretamente do namespace Models
-        foreach (var dependency in blueprint.LayerDependencies)
+        foreach (var dependency in blueprint.LayerDependencies.Where(dependency =>
+                     IsInvalidDependency(dependency, blueprint.Layers)))
         {
-            if (IsInvalidDependency(dependency, blueprint.Layers))
+            result.Errors.Add(new ArchitectureIssue
             {
-                result.Errors.Add(new ArchitectureIssue
-                {
-                    Category = "Layer Separation",
-                    Description = $"Invalid dependency: {dependency.SourceLayer} -> {dependency.TargetLayer}",
-                    Severity = "High",
-                    ComponentAffected = dependency.SourceLayer
-                });
-            }
+                Category = "Layer Separation",
+                Description = $"Invalid dependency: {dependency.SourceLayer} -> {dependency.TargetLayer}",
+                Severity = "High",
+                ComponentAffected = dependency.SourceLayer
+            });
         }
 
         return Task.FromResult(result);
     }
 
-    private bool IsInvalidDependency(LayerDependency dependency, List<ArchitectureLayer> layers)
+    private static bool IsInvalidDependency(LayerDependency dependency, List<ArchitectureLayer> layers)
     {
         var sourceLayer = layers.FirstOrDefault(l => l.Name == dependency.SourceLayer);
         var targetLayer = layers.FirstOrDefault(l => l.Name == dependency.TargetLayer);
 
         if (sourceLayer == null || targetLayer == null) return true;
 
-        // Simple rule: Higher layers shouldn't depend on lower layers
         var sourceIndex = layers.IndexOf(sourceLayer);
         var targetIndex = layers.IndexOf(targetLayer);
 

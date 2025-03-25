@@ -49,7 +49,8 @@ public class LlamaService : ILlamaService
         await ollama.Models.PullModelAsync("codellama:latest").EnsureSuccessAsync();
 
         var res = "";
-        var enumerable = ollama.Completions.GenerateCompletionAsync("codellama", prompt, cancellationToken: token);
+        var enumerable =
+            ollama.Completions.GenerateCompletionAsync("qwen2.5-coder", prompt, cancellationToken: token);
         await foreach (var response in enumerable)
         {
             res += response.Response;

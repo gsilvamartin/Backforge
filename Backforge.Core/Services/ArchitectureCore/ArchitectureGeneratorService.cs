@@ -195,7 +195,7 @@ public class ArchitectureGeneratorService : IArchitectureGenerator
         };
     }
 
-    private ArchitectureBlueprint CompileBlueprint(
+    private static ArchitectureBlueprint CompileBlueprint(
         AnalysisContext context,
         ArchitectureGenerationOptions options,
         PatternResolutionResult patternResult,
