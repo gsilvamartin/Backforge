@@ -1,5 +1,4 @@
-﻿// File: Backforge.Core/Services/ProjectInitializerCore/CommandExecutor.cs
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using Backforge.Core.Models.ProjectInitializer;
 using Backforge.Core.Services.ProjectInitializerCore.Interfaces;
@@ -89,7 +88,7 @@ public class CommandExecutor : ICommandExecutor
             {
                 var errorMessage = $"Failed to start process: {ex.Message}";
                 _logger.LogError(ex, "Failed to start process for command {Command}", cmdDisplay);
-                
+
                 result.Success = false;
                 result.ExceptionMessage = errorMessage;
                 return result;
@@ -106,7 +105,8 @@ public class CommandExecutor : ICommandExecutor
                     try
                     {
                         process.Kill(true);
-                        throw new TimeoutException($"Command execution timed out after {_defaultTimeoutMs/1000} seconds: {cmdDisplay}");
+                        throw new TimeoutException(
+                            $"Command execution timed out after {_defaultTimeoutMs / 1000} seconds: {cmdDisplay}");
                     }
                     catch
                     {
@@ -126,7 +126,7 @@ public class CommandExecutor : ICommandExecutor
 
             if (process.ExitCode != 0)
             {
-                _logger.LogWarning("Command executed with exit code {ExitCode}: {Error}", 
+                _logger.LogWarning("Command executed with exit code {ExitCode}: {Error}",
                     process.ExitCode, result.StandardError);
             }
             else
@@ -201,39 +201,39 @@ public class CommandExecutor : ICommandExecutor
         CancellationToken cancellationToken)
     {
         var result = new CommandExecutionResult();
-        
+
         try
         {
             // Handle different special commands
             var cmd = command.Command.ToLowerInvariant();
-            
+
             switch (cmd)
             {
                 case "mkdir":
                 case "md":
                     result = await ExecuteMkdirCommandAsync(command, workingDirectory);
                     break;
-                
+
                 case "touch":
                     result = await ExecuteTouchCommandAsync(command, workingDirectory);
                     break;
-                
+
                 case "type":
                 case "echo":
                     // Still use process for these as they might be part of redirection
                     return await ExecuteViaProcessAsync(command, workingDirectory, cancellationToken);
-                
+
                 default:
                     return await ExecuteViaProcessAsync(command, workingDirectory, cancellationToken);
             }
-            
+
             return result;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error executing special command: {Command} {Arguments}", 
+            _logger.LogError(ex, "Error executing special command: {Command} {Arguments}",
                 command.Command, command.Arguments);
-            
+
             return new CommandExecutionResult
             {
                 Success = false,
@@ -245,22 +245,23 @@ public class CommandExecutor : ICommandExecutor
     /// <summary>
     /// Executes mkdir command directly using Directory.CreateDirectory
     /// </summary>
-    private Task<CommandExecutionResult> ExecuteMkdirCommandAsync(InitializationCommand command, string workingDirectory)
+    private Task<CommandExecutionResult> ExecuteMkdirCommandAsync(InitializationCommand command,
+        string workingDirectory)
     {
         var directoryPath = command.Arguments.Trim();
-        
+
         // If it's a relative path, combine with working directory
         if (!Path.IsPathRooted(directoryPath))
         {
             directoryPath = Path.Combine(workingDirectory, directoryPath);
         }
-        
+
         _logger.LogInformation("Creating directory: {DirectoryPath}", directoryPath);
-        
+
         try
         {
             Directory.CreateDirectory(directoryPath);
-            
+
             return Task.FromResult(new CommandExecutionResult
             {
                 Success = true,
@@ -270,7 +271,7 @@ public class CommandExecutor : ICommandExecutor
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create directory: {DirectoryPath}", directoryPath);
-            
+
             return Task.FromResult(new CommandExecutionResult
             {
                 Success = false,
@@ -283,18 +284,19 @@ public class CommandExecutor : ICommandExecutor
     /// <summary>
     /// Executes touch command directly using File.Create
     /// </summary>
-    private Task<CommandExecutionResult> ExecuteTouchCommandAsync(InitializationCommand command, string workingDirectory)
+    private Task<CommandExecutionResult> ExecuteTouchCommandAsync(InitializationCommand command,
+        string workingDirectory)
     {
         var filePath = command.Arguments.Trim();
-        
+
         // If it's a relative path, combine with working directory
         if (!Path.IsPathRooted(filePath))
         {
             filePath = Path.Combine(workingDirectory, filePath);
         }
-        
+
         _logger.LogInformation("Creating empty file: {FilePath}", filePath);
-        
+
         try
         {
             // Create the directory if it doesn't exist
@@ -303,13 +305,13 @@ public class CommandExecutor : ICommandExecutor
             {
                 Directory.CreateDirectory(directory);
             }
-            
+
             // Create the file
             using (File.Create(filePath))
             {
                 // Just creating an empty file
             }
-            
+
             return Task.FromResult(new CommandExecutionResult
             {
                 Success = true,
@@ -319,7 +321,7 @@ public class CommandExecutor : ICommandExecutor
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create file: {FilePath}", filePath);
-            
+
             return Task.FromResult(new CommandExecutionResult
             {
                 Success = false,
@@ -368,10 +370,7 @@ public class CommandExecutor : ICommandExecutor
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            await Task.Run(() =>
-            {
-                process.WaitForExit(_defaultTimeoutMs);
-            }, cancellationToken);
+            await Task.Run(() => { process.WaitForExit(_defaultTimeoutMs); }, cancellationToken);
 
             result.Success = process.ExitCode == 0;
             result.ExitCode = process.ExitCode;

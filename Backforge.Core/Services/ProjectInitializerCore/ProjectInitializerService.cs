@@ -1,4 +1,5 @@
-﻿using Backforge.Core.Models.Architecture;
+﻿// File: Backforge.Core/Services/ProjectInitializerCore/ProjectInitializerServiceService.cs
+using Backforge.Core.Models.Architecture;
 using Backforge.Core.Models.ProjectInitializer;
 using Backforge.Core.Models.StructureGenerator;
 using Backforge.Core.Services.LLamaCore;
@@ -6,7 +7,6 @@ using Backforge.Core.Services.ProjectInitializerCore.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ProjectInitializerCore;
-
 
 /// <summary>
 /// Service responsible for initializing project structures 
@@ -68,17 +68,39 @@ public class ProjectInitializerService : IProjectInitializerService
 
         try
         {
+            // Ensure output directory exists
             _directoryService.EnsureDirectoryExists(outputDirectory);
+            
+            // Normalize project structure paths using the PathProcessor
+            var pathProcessor = new PathProcessor(_logger);
+            projectStructure = pathProcessor.NormalizeProjectStructure(projectStructure);
 
-            // Generate commands using the blueprint and project structure
+            // Two-step approach: First create the directories and files directly, then run project initialization commands
+            
+            // Step 1: Create the directory and file structure directly
+            _logger.LogInformation("Creating project directory structure in {OutputDirectory}", outputDirectory);
+            var structureCreated = await CreateFilesFromStructureAsync(projectStructure, outputDirectory, cancellationToken);
+            
+            if (!structureCreated)
+            {
+                result.Success = false;
+                result.Errors.Add("Failed to create project directory structure");
+                return result;
+            }
+            
+            // Step 2: Generate and run project initialization commands (for package managers, git, etc.)
+            _logger.LogInformation("Generating project initialization commands");
+            
             var commands = await GenerateInitializationCommandsAsync(blueprint, projectStructure, cancellationToken);
 
             if (commands.Count == 0)
             {
                 _logger.LogWarning("No initialization commands were generated for blueprint {BlueprintId}",
                     blueprint.BlueprintId);
-                result.Success = false;
-                result.Errors.Add("No initialization commands were generated");
+                
+                // We still created the structure, so this isn't a failure
+                result.Success = true;
+                result.InitializationSteps.Add("Created project directory structure without additional initialization commands");
                 return result;
             }
 
@@ -207,9 +229,14 @@ public class ProjectInitializerService : IProjectInitializerService
 
             // Filter out any commands with empty command names
             commands.RemoveAll(command => string.IsNullOrWhiteSpace(command.Command));
-
-            // Add file creation commands if not already included
-            EnsureFileCreationCommands(commands, projectStructure);
+            
+            // Filter out mkdir and file creation commands since we're handling that directly
+            commands.RemoveAll(command => 
+                command.Command.Equals("mkdir", StringComparison.OrdinalIgnoreCase) || 
+                command.Command.Equals("md", StringComparison.OrdinalIgnoreCase) || 
+                command.Command.Equals("touch", StringComparison.OrdinalIgnoreCase) ||
+                command.Command.Equals("echo", StringComparison.OrdinalIgnoreCase) && command.Arguments.Contains(">") ||
+                command.Command.Equals("type", StringComparison.OrdinalIgnoreCase) && command.Arguments.Contains(">"));
 
             _logger.LogInformation("Generated {Count} initialization commands", commands.Count);
             return commands;
@@ -223,137 +250,101 @@ public class ProjectInitializerService : IProjectInitializerService
     }
     
     /// <summary>
-    /// Ensures that commands to create all files in the project structure are included
+    /// Creates the necessary files based on the project structure
     /// </summary>
-    /// <param name="commands">The current list of commands</param>
-    /// <param name="projectStructure">The project structure</param>
-    private void EnsureFileCreationCommands(List<InitializationCommand> commands, ProjectStructure projectStructure)
+    private async Task<bool> CreateFilesFromStructureAsync(
+        ProjectStructure projectStructure,
+        string outputDirectory,
+        CancellationToken cancellationToken)
     {
-        var fileCreationCommands = new List<InitializationCommand>();
-        
-        // Process root directories
-        foreach (var rootDir in projectStructure.RootDirectories)
+        try
         {
-            // Add command to create root directory if not already included
-            if (!commands.Any(c => IsDirectoryCreationCommand(c, rootDir.Path)))
+            // First, create all directories
+            foreach (var rootDir in projectStructure.RootDirectories)
             {
-                fileCreationCommands.Add(new InitializationCommand
-                {
-                    Command = GetOsSpecificCommand("mkdir"),
-                    Arguments = rootDir.Path,
-                    WorkingDirectory = "",
-                    CriticalOnFailure = true,
-                    Purpose = $"Create directory: {rootDir.Path}"
-                });
+                await CreateDirectoryStructureAsync(rootDir, outputDirectory, cancellationToken);
             }
             
-            // Process files and subdirectories recursively
-            ProcessDirectoryForFileCreation(rootDir, "", fileCreationCommands, commands);
+            _logger.LogInformation("All directories and files created successfully");
+            return true;
         }
-        
-        // Add any missing file creation commands
-        foreach (var cmd in fileCreationCommands)
+        catch (Exception ex)
         {
-            commands.Add(cmd);
+            _logger.LogError(ex, "Error creating files from project structure");
+            return false;
         }
     }
-    
+
     /// <summary>
-    /// Recursively processes a directory to ensure all files and subdirectories are created
+    /// Creates a directory and all its files and subdirectories
     /// </summary>
-    private void ProcessDirectoryForFileCreation(
-        ProjectDirectory directory, 
-        string parentPath, 
-        List<InitializationCommand> fileCreationCommands,
-        List<InitializationCommand> existingCommands)
+    private async Task CreateDirectoryStructureAsync(
+        ProjectDirectory directory,
+        string basePath,
+        CancellationToken cancellationToken)
     {
-        var dirPath = string.IsNullOrEmpty(parentPath) ? directory.Path : Path.Combine(parentPath, directory.Path);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
         
-        // Process files in this directory
+        // Create the directory
+        var directoryPath = Path.Combine(basePath, directory.Path);
+        
+        if (!Directory.Exists(directoryPath))
+        {
+            _logger.LogDebug("Creating directory: {DirectoryPath}", directoryPath);
+            Directory.CreateDirectory(directoryPath);
+        }
+        
+        // Create all files in this directory
         foreach (var file in directory.Files)
         {
-            var filePath = string.IsNullOrEmpty(parentPath) ? file.Path : Path.Combine(parentPath, file.Path);
-            
-            // Check if a command to create this file already exists
-            if (!existingCommands.Any(c => IsFileCreationCommand(c, filePath)))
-            {
-                fileCreationCommands.Add(new InitializationCommand
-                {
-                    Command = GetOsSpecificCommand("touch"),
-                    Arguments = file.Name,
-                    WorkingDirectory = Path.GetDirectoryName(filePath) ?? "",
-                    CriticalOnFailure = false,
-                    Purpose = $"Create empty file: {filePath}"
-                });
-            }
+            await CreateFileAsync(file, basePath, cancellationToken);
         }
         
-        // Process subdirectories
+        // Process subdirectories recursively
         foreach (var subDir in directory.Subdirectories)
         {
-            var subDirPath = string.IsNullOrEmpty(parentPath) 
-                ? Path.Combine(directory.Path, subDir.Path) 
-                : Path.Combine(parentPath, directory.Path, subDir.Path);
-            
-            // Add command to create subdirectory if not already included
-            if (!existingCommands.Any(c => IsDirectoryCreationCommand(c, subDirPath)))
-            {
-                fileCreationCommands.Add(new InitializationCommand
-                {
-                    Command = GetOsSpecificCommand("mkdir"),
-                    Arguments = subDir.Path,
-                    WorkingDirectory = Path.Combine(parentPath, directory.Path),
-                    CriticalOnFailure = true,
-                    Purpose = $"Create directory: {subDirPath}"
-                });
-            }
-            
-            // Process the subdirectory recursively
-            ProcessDirectoryForFileCreation(subDir, Path.Combine(parentPath, directory.Path), fileCreationCommands, existingCommands);
+            await CreateDirectoryStructureAsync(subDir, basePath, cancellationToken);
         }
     }
-    
+
     /// <summary>
-    /// Gets the OS-specific command for file and directory operations
+    /// Creates a file with its content
     /// </summary>
-    private string GetOsSpecificCommand(string command)
+    private async Task CreateFileAsync(
+        ProjectFile file,
+        string basePath,
+        CancellationToken cancellationToken)
     {
-        if (OperatingSystem.IsWindows())
+        if (cancellationToken.IsCancellationRequested)
         {
-            switch (command.ToLowerInvariant())
-            {
-                case "mkdir": return "mkdir";
-                case "touch": return "type nul >";  // Windows equivalent for touch
-                default: return command;
-            }
+            return;
+        }
+        
+        // Get the full file path
+        var filePath = Path.Combine(basePath, file.Path);
+        
+        // Ensure the directory exists
+        var directoryPath = Path.GetDirectoryName(filePath);
+        if (!string.IsNullOrEmpty(directoryPath) && !Directory.Exists(directoryPath))
+        {
+            _logger.LogDebug("Creating directory for file: {DirectoryPath}", directoryPath);
+            Directory.CreateDirectory(directoryPath);
+        }
+        
+        // Create the file
+        _logger.LogDebug("Creating file: {FilePath}", filePath);
+        
+        // Write content if available, otherwise create an empty file
+        if (!string.IsNullOrEmpty(file.Template))
+        {
+            await File.WriteAllTextAsync(filePath, file.Template, cancellationToken);
         }
         else
         {
-            // Unix-based systems
-            return command;
+            using (File.Create(filePath)) { }
         }
-    }
-    
-    /// <summary>
-    /// Checks if a command is for creating a specific directory
-    /// </summary>
-    private bool IsDirectoryCreationCommand(InitializationCommand command, string dirPath)
-    {
-        var normalizedCommand = command.Command.ToLowerInvariant();
-        
-        return (normalizedCommand == "mkdir" || normalizedCommand.Contains("md") || normalizedCommand.Contains("directory")) &&
-               (command.Arguments.Contains(dirPath) || command.Purpose.Contains(dirPath));
-    }
-    
-    /// <summary>
-    /// Checks if a command is for creating a specific file
-    /// </summary>
-    private bool IsFileCreationCommand(InitializationCommand command, string filePath)
-    {
-        var normalizedCommand = command.Command.ToLowerInvariant();
-        var fileName = Path.GetFileName(filePath);
-        
-        return (normalizedCommand == "touch" || normalizedCommand.Contains("type") || normalizedCommand.Contains("new-item")) &&
-               (command.Arguments.Contains(fileName) || command.Purpose.Contains(filePath));
     }
 }
