@@ -1,4 +1,4 @@
-﻿namespace Backforge.Core.Services.ArchitectureCore;
+﻿namespace Backforge.Core.Exceptions;
 
 public class ArchitectureGenerationException : Exception
 {

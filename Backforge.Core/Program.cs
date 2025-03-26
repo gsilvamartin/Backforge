@@ -1,6 +1,15 @@
 ﻿using Backforge.Core.Services;
 using Backforge.Core.Services.ArchitectureCore;
+using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
+using Backforge.Core.Services.ProjectInitializerCore;
+using Backforge.Core.Services.ProjectInitializerCore.Interfaces;
 using Backforge.Core.Services.RequirementAnalyzerCore;
+using Backforge.Core.Services.RequirementAnalyzerCore.Interfaces;
+using Backforge.Core.Services.StructureGeneratorCore;
+using Backforge.Core.Services.StructureGeneratorCore.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core;
@@ -9,77 +18,61 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
-        using var factory = LoggerFactory.Create(builder =>
-        {
-            builder.AddConsole(); // Adiciona logs no console
-            builder.SetMinimumLevel(LogLevel.Debug);
-        });
+        var host = CreateHostBuilder(args).Build();
 
-        var logger = factory.CreateLogger<RequirementAnalyzer>();
+        var backforgeService = host.Services.GetRequiredService<BackforgeService>();
 
-        // var requirement = new RequirementAnalyzer(
-        //     new LlamaService("/Users/guilhermemartin/.ollama/models/blobs/sha256-667b0c1932bc6ffc593ed1d03f895bf2dc8dc6df21db3042284a6f4416b06a29"),
-        //     logger // Usa o logger correto
-        // );
+        await backforgeService.RunAsync(
+            "fazer uma api completa em .net para integração com stripe",
+            "C://Users//gsilv//OneDrive//Documents//Guilherme//novo-projeto-guilherme",
+            CancellationToken.None);
 
-        var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-        var llamaService = new LlamaService(); // Your ILlamaService implementation
-        var textProcessingService = new TextProcessingService(
-            loggerFactory.CreateLogger<TextProcessingService>()
-        );
-
-        var requirementAnalyzer = new RequirementAnalyzer(
-            llamaService,
-            loggerFactory.CreateLogger<RequirementAnalyzer>(),
-            new EntityRelationshipExtractor(
-                llamaService,
-                loggerFactory.CreateLogger<EntityRelationshipExtractor>(),
-                textProcessingService
-            ),
-            new ImplicitRequirementsAnalyzer(
-                llamaService,
-                loggerFactory.CreateLogger<ImplicitRequirementsAnalyzer>(),
-                textProcessingService
-            ),
-            new ArchitecturalDecisionService(
-                llamaService,
-                loggerFactory.CreateLogger<ArchitecturalDecisionService>()
-            ),
-            new AnalysisValidationService(
-                llamaService,
-                loggerFactory.CreateLogger<AnalysisValidationService>(),
-                textProcessingService
-            ),
-            textProcessingService
-        );
-
-        var context = await requirementAnalyzer.AnalyzeRequirementsAsync("faça uma api completa em .net para se comunicar com o stripe");
-        var patternResolver = new ArchitecturePatternResolver(llamaService, factory.CreateLogger<ArchitecturePatternResolver>()); // Your IArchitecturePatternResolver implementation
-        var componentRecommender = new ComponentRecommenderService(llamaService, factory.CreateLogger<ComponentRecommenderService>());
-        var integrationDesigner = new IntegrationDesignerService(llamaService, factory.CreateLogger<IntegrationDesignerService>()); // Your IIntegrationDesigner implementation
-        var scalabilityPlanner = new ScalabilityPlannerService(llamaService, factory.CreateLogger<ScalabilityPlannerService>());
-        var securityDesigner = new SecurityDesignerService(llamaService, factory.CreateLogger<SecurityDesignerService>());
-        var performanceOptimizer = new PerformanceOptimizerService(llamaService, factory.CreateLogger<PerformanceOptimizerService>());
-        var resilienceDesigner = new ResilienceDesignerService(llamaService, factory.CreateLogger<ResilienceDesignerService>());  
-        var monitoringDesigner = new MonitoringDesignerService(llamaService, factory.CreateLogger<MonitoringDesignerService>());    
-        var architectureValidator = new ArchitectureValidatorService(llamaService, factory.CreateLogger<ArchitectureValidatorService>(), null);
-        var architectureDocumenter = new ArchitectureDocumenterService(llamaService, factory.CreateLogger<ArchitectureDocumenterService>());
-
-        var architectureGenerator = new ArchitectureGeneratorService(
-            llamaService,
-            factory.CreateLogger<ArchitectureGeneratorService>(),
-            patternResolver,
-            componentRecommender,
-            integrationDesigner,
-            scalabilityPlanner,
-            securityDesigner,
-            performanceOptimizer,
-            resilienceDesigner,
-            monitoringDesigner,
-            architectureValidator,
-            architectureDocumenter);
-        
-        var r = await architectureGenerator.GenerateArchitectureAsync(context, null, CancellationToken.None);
-        Console.WriteLine(r);
+        await host.RunAsync();
     }
+
+    private static IHostBuilder CreateHostBuilder(string[] args) =>
+        Host.CreateDefaultBuilder(args)
+            .ConfigureLogging(logging =>
+            {
+                logging.ClearProviders();
+                logging.AddConsole();
+                logging.SetMinimumLevel(LogLevel.Debug);
+            })
+            .ConfigureServices((_, services) =>
+            {
+                // Register core services
+                services.AddSingleton<ILlamaService, LlamaService>();
+                services.AddSingleton<ITextProcessingService, TextProcessingService>();
+
+                // Register RequirementAnalyzer services
+                services.AddScoped<IEntityRelationshipExtractor, EntityRelationshipExtractor>();
+                services.AddScoped<IImplicitRequirementsAnalyzer, ImplicitRequirementsAnalyzer>();
+                services.AddScoped<IArchitecturalDecisionService, ArchitecturalDecisionService>();
+                services.AddScoped<IAnalysisValidationService, AnalysisValidationService>();
+                services.AddScoped<IRequirementAnalyzer, RequirementAnalyzer>();
+
+                // Register Architecture services
+                services.AddScoped<IArchitecturePatternResolver, ArchitecturePatternResolver>();
+                services.AddScoped<IComponentRecommender, ComponentRecommenderService>();
+                services.AddScoped<IIntegrationDesigner, IntegrationDesignerService>();
+                services.AddScoped<IScalabilityPlanner, ScalabilityPlannerService>();
+                services.AddScoped<ISecurityDesigner, SecurityDesignerService>();
+                services.AddScoped<IPerformanceOptimizer, PerformanceOptimizerService>();
+                services.AddScoped<IResilienceDesigner, ResilienceDesignerService>();
+                services.AddScoped<IMonitoringDesigner, MonitoringDesignerService>();
+                services.AddScoped<IArchitectureDocumenter, ArchitectureDocumentService>();
+                services.AddScoped<IArchitectureGenerator, ArchitectureGeneratorService>();
+
+                //Register Project Initializer
+                services.AddScoped<IProjectInitializerService, ProjectInitializerService>();
+                services.AddScoped<IProjectInitializerPromptBuilder, ProjectInitializerPromptBuilder>();
+                services.AddScoped<IDirectoryService, DirectoryService>();
+                services.AddScoped<ICommandExecutor, CommandExecutor>();
+
+                // Project Structure Generator
+                services.AddScoped<IProjectStructureGeneratorService, ProjectStructureGeneratorService>();
+
+                // Register the main application service
+                services.AddScoped<BackforgeService>();
+            });
 }

@@ -2,55 +2,42 @@
 using Backforge.Core.Models;
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ArchitectureCore;
 
-public class PerformanceOptimizerService : IPerformanceOptimizer
+public class PerformanceOptimizerService(
+    ILlamaService llamaService,
+    ILogger<PerformanceOptimizerService> logger)
+    : IPerformanceOptimizer
 {
-    private readonly ILlamaService _llamaService;
-    private readonly ILogger<PerformanceOptimizerService> _logger;
-
-    public PerformanceOptimizerService(
-        ILlamaService llamaService,
-        ILogger<PerformanceOptimizerService> logger)
-    {
-        _llamaService = llamaService;
-        _logger = logger;
-    }
-
     public async Task<PerformanceOptimizations> OptimizePerformanceAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
         IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
-        var prompt = BuildPerformancePrompt(context, components, layers, integrations, options);
+        var prompt = BuildPerformancePrompt(context, components, integrations);
         var optimizations =
-            await _llamaService.GetStructuredResponseAsync<PerformanceOptimizations>(prompt, cancellationToken);
+            await llamaService.GetStructuredResponseAsync<PerformanceOptimizations>(prompt, cancellationToken);
 
-        // Validate and complete optimizations
         optimizations.ComponentOptimizations = await CompleteComponentOptimizationsAsync(
             components.Components, optimizations.ComponentOptimizations, cancellationToken);
 
         return optimizations;
     }
 
-    private string BuildPerformancePrompt(
+    private static string BuildPerformancePrompt(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
-        IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options)
+        IntegrationDesignResult integrations)
     {
         return $"""
                 Design performance optimizations for:
                 Components: {JsonSerializer.Serialize(components.Components)}
                 Data Flows: {JsonSerializer.Serialize(integrations.DataFlows)}
                 Requirements: {context.UserRequirementText}
-                Options: {JsonSerializer.Serialize(options)}
 
                 Include:
                 - Caching strategies
@@ -66,10 +53,10 @@ public class PerformanceOptimizerService : IPerformanceOptimizer
         CancellationToken cancellationToken)
     {
         var missingComponents = components
-            .Where(c => !existingOpts.Any(o => o.ComponentId == c.Id))
+            .Where(c => existingOpts.All(o => o.ComponentId != c.Id))
             .ToList();
 
-        if (!missingComponents.Any()) return existingOpts;
+        if (missingComponents.Count == 0) return existingOpts;
 
         var prompt = $"""
                       Add performance optimizations for these components:
@@ -79,7 +66,7 @@ public class PerformanceOptimizerService : IPerformanceOptimizer
                       {JsonSerializer.Serialize(existingOpts)}
                       """;
 
-        var additionalOpts = await _llamaService.GetStructuredResponseAsync<List<ComponentOptimization>>(
+        var additionalOpts = await llamaService.GetStructuredResponseAsync<List<ComponentOptimization>>(
             prompt, cancellationToken);
 
         return existingOpts.Concat(additionalOpts).ToList();

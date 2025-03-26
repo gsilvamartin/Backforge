@@ -8,8 +8,6 @@ public interface IResilienceDesigner
     Task<ResilienceDesign> DesignResilienceAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
         IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken);
 }

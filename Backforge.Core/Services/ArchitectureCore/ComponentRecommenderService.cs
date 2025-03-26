@@ -2,6 +2,7 @@
 using Backforge.Core.Models;
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ArchitectureCore;

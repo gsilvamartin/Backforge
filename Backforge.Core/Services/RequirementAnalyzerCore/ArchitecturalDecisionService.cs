@@ -1,10 +1,12 @@
 ﻿using System.Text.RegularExpressions;
 using Backforge.Core.Models;
+using Backforge.Core.Services.LLamaCore;
+using Backforge.Core.Services.RequirementAnalyzerCore.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.RequirementAnalyzerCore;
 
-public class ArchitecturalDecisionService
+public class ArchitecturalDecisionService : IArchitecturalDecisionService
 {
     private readonly ILlamaService _llamaService;
     private readonly ILogger<ArchitecturalDecisionService> _logger;
@@ -16,7 +18,7 @@ public class ArchitecturalDecisionService
     {
         _llamaService = llamaService;
         _logger = logger;
-        
+
         _architecturalCategories = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
             ["Distribution"] = new() { "service", "micro", "distributed", "communication", "network" },
@@ -40,7 +42,7 @@ public class ArchitecturalDecisionService
 
         try
         {
-            if (string.IsNullOrWhiteSpace(context.UserRequirementText) || 
+            if (string.IsNullOrWhiteSpace(context.UserRequirementText) ||
                 context.UserRequirementText.Length < 20)
             {
                 _logger.LogWarning("Requirement too short for architectural decisions");
@@ -50,20 +52,20 @@ public class ArchitecturalDecisionService
             var categories = DeriveArchitecturalCategories(context);
 
             string decisionPrompt = $"""
-                Suggest 3-5 architectural decisions for the following:
-                For each decision, provide the decision, reasoning, alternatives, and confidence (0.0-1.0):
+                                     Suggest 3-5 architectural decisions for the following:
+                                     For each decision, provide the decision, reasoning, alternatives, and confidence (0.0-1.0):
 
-                Requirement: {context.UserRequirementText}
-                Entities: {string.Join(", ", context.ExtractedEntities.Take(15))}
-                Relationships: {string.Join(", ", context.ExtractedRelationships.Take(10))}
-                Categories: {string.Join(", ", categories)}
+                                     Requirement: {context.UserRequirementText}
+                                     Entities: {string.Join(", ", context.ExtractedEntities.Take(15))}
+                                     Relationships: {string.Join(", ", context.ExtractedRelationships.Take(10))}
+                                     Categories: {string.Join(", ", categories)}
 
-                Format:
-                DECISION: [decision text]
-                REASONING: [reasoning text]
-                ALTERNATIVES: [alt1], [alt2], [alt3]
-                CONFIDENCE: [0.0-1.0]
-                """;
+                                     Format:
+                                     DECISION: [decision text]
+                                     REASONING: [reasoning text]
+                                     ALTERNATIVES: [alt1], [alt2], [alt3]
+                                     CONFIDENCE: [0.0-1.0]
+                                     """;
 
             string response = await _llamaService.GetLlamaResponseAsync(decisionPrompt, cancellationToken);
             return ParseDecisionPoints(response);
@@ -82,12 +84,12 @@ public class ArchitecturalDecisionService
     private List<string> DeriveArchitecturalCategories(AnalysisContext context)
     {
         var combinedText = (context.NormalizedText ??
-            (context.UserRequirementText + " " +
-             string.Join(" ", context.ExtractedEntities) + " " +
-             string.Join(" ", context.ExtractedRelationships))).ToLowerInvariant();
+                            (context.UserRequirementText + " " +
+                             string.Join(" ", context.ExtractedEntities) + " " +
+                             string.Join(" ", context.ExtractedRelationships))).ToLowerInvariant();
 
         return _architecturalCategories
-            .Where(category => category.Value.Any(keyword => 
+            .Where(category => category.Value.Any(keyword =>
                 combinedText.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
             .Select(category => category.Key)
             .DefaultIfEmpty("General")
@@ -119,8 +121,8 @@ public class ArchitecturalDecisionService
                     .Select(a => a.Trim())
                     .Where(a => !string.IsNullOrWhiteSpace(a))
                     .ToList(),
-                ConfidenceScore = float.TryParse(match.Groups["confidence"].Value, out float confidence) 
-                    ? Math.Clamp(confidence, 0f, 1f) 
+                ConfidenceScore = float.TryParse(match.Groups["confidence"].Value, out float confidence)
+                    ? Math.Clamp(confidence, 0f, 1f)
                     : 0.5f
             };
 

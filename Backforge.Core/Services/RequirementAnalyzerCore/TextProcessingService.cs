@@ -1,22 +1,16 @@
 ﻿using System.Text.RegularExpressions;
+using Backforge.Core.Services.RequirementAnalyzerCore.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.RequirementAnalyzerCore;
 
-public class TextProcessingService
+public class TextProcessingService(ILogger<TextProcessingService> logger): ITextProcessingService
 {
-    private readonly IReadOnlySet<string> _stopWords;
-    private readonly ILogger<TextProcessingService> _logger;
-
-    public TextProcessingService(ILogger<TextProcessingService> logger)
+    private readonly IReadOnlySet<string> _stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        _logger = logger;
-        _stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "the", "and", "for", "will", "with", "that", "this", "should", "must", "have",
-            "from", "been", "are", "not", "can", "has", "was", "were", "they", "their", "them"
-        };
-    }
+        "the", "and", "for", "will", "with", "that", "this", "should", "must", "have",
+        "from", "been", "are", "not", "can", "has", "was", "were", "they", "their", "them"
+    };
 
     public string NormalizeText(string text)
     {
@@ -57,10 +51,10 @@ public class TextProcessingService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error analyzing keyword frequency: {ErrorMessage}", ex.Message);
+            logger.LogError(ex, "Error analyzing keyword frequency: {ErrorMessage}", ex.Message);
             return new Dictionary<string, int>();
         }
     }
-    
+
     public bool IsStopWord(string word) => _stopWords.Contains(word);
 }

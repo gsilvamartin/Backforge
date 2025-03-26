@@ -8,9 +8,6 @@ public interface ISecurityDesigner
     Task<SecurityDesign> CreateSecurityDesignAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
         IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken);
-
 }

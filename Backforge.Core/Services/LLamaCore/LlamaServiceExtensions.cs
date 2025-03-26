@@ -1,11 +1,9 @@
-﻿using System.Collections;
-using System.Reflection;
+﻿using System.Reflection;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
-namespace Backforge.Core.Services;
+namespace Backforge.Core.Services.LLamaCore;
 
 public static class LlamaServiceExtensions
 {
@@ -50,6 +48,7 @@ public static class LlamaServiceExtensions
                                     - **No extra fields, no missing fields, no variations in structure.**  
                                     - **Any deviation will result in an invalid response.**  
                                     - **Do NOT include any text outside the JSON braces `{}` or brackets `[]`.**  
+                                    - **If we have a json object in a string it must be properly ESCAPED.**
 
                                  EXPECTED RESPONSE TYPE: **{{(isCollectionType ? "ARRAY" : "OBJECT")}}**  
                                  EXPECTED ELEMENT TYPE: **{{elementType.Name}}**  
@@ -65,13 +64,11 @@ public static class LlamaServiceExtensions
                                  - **Failure to comply with these instructions will result in rejection of the response.**  
                                  """;
 
-        Console.WriteLine("Running prompt: " + prompt);
-
         var response = await llamaService.GetLlamaResponseAsync(structuredPrompt, cancellationToken);
 
         try
         {
-            var cleanJson = CleanAndValidateJsonResponse(response, isCollectionType, elementType);
+            var cleanJson = CleanAndValidateJsonResponse(response, isCollectionType);
             return JsonSerializer.Deserialize<T>(cleanJson, DefaultJsonOptions) ??
                    throw new InvalidOperationException("Deserialization returned null");
         }
@@ -104,9 +101,8 @@ public static class LlamaServiceExtensions
                                        {{jsonExample}}
                                        """;
 
-                //DeploymentTopology - Configuration
                 var newResponse = await llamaService.GetLlamaResponseAsync(fallbackPrompt, cancellationToken);
-                var cleanJson = CleanAndValidateJsonResponse(newResponse, isCollectionType, elementType);
+                var cleanJson = CleanAndValidateJsonResponse(newResponse, isCollectionType);
 
                 return JsonSerializer.Deserialize<T>(cleanJson, DefaultJsonOptions) ??
                        throw new InvalidOperationException("Deserialization returned null");
@@ -121,21 +117,17 @@ public static class LlamaServiceExtensions
         }
     }
 
-    private static string CleanAndValidateJsonResponse(string response, bool expectArray, Type elementType)
+    private static string CleanAndValidateJsonResponse(string response, bool expectArray)
     {
         response = response.Trim();
-
-        // Remove all markdown code blocks and other non-JSON text
         response = Regex.Replace(response, @"```(json)?|`", string.Empty).Trim();
 
-        // Handle cases where JSON might be wrapped in unexpected characters
-        var firstBrace = response.IndexOfAny(new[] { '{', '[' });
+        var firstBrace = response.IndexOfAny(['{', '[']);
         if (firstBrace < 0)
         {
             throw new InvalidOperationException("No JSON structure found in response");
         }
 
-        // Find the matching closing brace/bracket
         int lastBrace = -1;
         int depth = 0;
         for (int i = firstBrace; i < response.Length; i++)
@@ -161,11 +153,8 @@ public static class LlamaServiceExtensions
         }
 
         response = response.Substring(firstBrace, lastBrace - firstBrace + 1);
-
-        // Remove trailing commas from arrays and objects
         response = Regex.Replace(response, @",(\s*[}\]])", "$1");
 
-        // Validate JSON structure
         try
         {
             using var doc = JsonDocument.Parse(response, new JsonDocumentOptions
@@ -174,18 +163,14 @@ public static class LlamaServiceExtensions
                 CommentHandling = JsonCommentHandling.Skip
             });
 
-            // Validate root element type
-            if (expectArray && doc.RootElement.ValueKind != JsonValueKind.Array)
+            return expectArray switch
             {
-                throw new InvalidOperationException($"Expected JSON array but got {doc.RootElement.ValueKind}");
-            }
-
-            if (!expectArray && doc.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                throw new InvalidOperationException($"Expected JSON object but got {doc.RootElement.ValueKind}");
-            }
-
-            return response;
+                true when doc.RootElement.ValueKind != JsonValueKind.Array => throw new InvalidOperationException(
+                    $"Expected JSON array but got {doc.RootElement.ValueKind}"),
+                false when doc.RootElement.ValueKind != JsonValueKind.Object => throw new InvalidOperationException(
+                    $"Expected JSON object but got {doc.RootElement.ValueKind}"),
+                _ => response
+            };
         }
         catch (JsonException ex)
         {
@@ -193,48 +178,15 @@ public static class LlamaServiceExtensions
         }
     }
 
-    private static string FixCommonJsonErrors(string json)
-    {
-        // Fix common LLM JSON generation issues
-        json = json.Trim();
-
-        // Ensure proper array formatting
-        if (json.StartsWith("[") && !json.EndsWith("]"))
-        {
-            // Try to complete the array
-            var lastBracket = json.LastIndexOf(']');
-            if (lastBracket > 0)
-            {
-                json = json[..(lastBracket + 1)];
-            }
-            else
-            {
-                json += "]";
-            }
-        }
-
-        // Remove any text after the JSON structure
-        var jsonEnd = json.LastIndexOfAny(new[] { '}', ']' });
-        if (jsonEnd >= 0 && jsonEnd < json.Length - 1)
-        {
-            json = json[..(jsonEnd + 1)];
-        }
-
-        return json;
-    }
-
     private static string BuildJsonExample(Type type, HashSet<Type>? processedTypes = null)
     {
-        processedTypes ??= new HashSet<Type>();
+        processedTypes ??= [];
 
-        if (processedTypes.Contains(type))
-            return "{}"; // Prevent circular references
-
-        processedTypes.Add(type);
+        if (!processedTypes.Add(type))
+            return "{}";
 
         try
         {
-            // Handle dictionaries
             if (IsDictionaryType(type))
             {
                 var keyType = type.GetGenericArguments()[0];
@@ -242,31 +194,25 @@ public static class LlamaServiceExtensions
                 return $"{{ \"{GetDictionaryKeyExample(keyType)}\": {BuildJsonExample(valueType, processedTypes)} }}";
             }
 
-            // Handle other collection types
             if (IsCollectionType(type))
             {
                 var elementType = GetCollectionElementType(type);
                 return $"[{BuildJsonExample(elementType, processedTypes)}]";
             }
 
-            // Handle classes/objects
-            if (type.IsClass && type != typeof(string))
+            if (!type.IsClass || type == typeof(string)) return GetPrimitiveExampleValue(type);
+            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.GetCustomAttribute<JsonIgnoreAttribute>() == null)
+                .OrderBy(p => p.GetCustomAttribute<JsonPropertyOrderAttribute>()?.Order ?? 0);
+
+            var jsonProperties = properties.Select(prop =>
             {
-                var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(p => p.GetCustomAttribute<JsonIgnoreAttribute>() == null)
-                    .OrderBy(p => p.GetCustomAttribute<JsonPropertyOrderAttribute>()?.Order ?? 0);
+                var propType = prop.PropertyType;
+                var exampleValue = GetPropertyExampleValue(propType, processedTypes);
+                return $"\"{GetPropertyName(prop)}\": {exampleValue}";
+            });
 
-                var jsonProperties = properties.Select(prop =>
-                {
-                    var propType = prop.PropertyType;
-                    var exampleValue = GetPropertyExampleValue(propType, processedTypes);
-                    return $"\"{GetPropertyName(prop)}\": {exampleValue}";
-                });
-
-                return $"{{{string.Join(", ", jsonProperties)}}}";
-            }
-
-            return GetPrimitiveExampleValue(type);
+            return $"{{{string.Join(", ", jsonProperties)}}}";
         }
         finally
         {

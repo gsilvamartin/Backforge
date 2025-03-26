@@ -1,19 +1,21 @@
 ﻿using System.Text.RegularExpressions;
 using Backforge.Core.Models;
+using Backforge.Core.Services.LLamaCore;
+using Backforge.Core.Services.RequirementAnalyzerCore.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.RequirementAnalyzerCore;
 
-public class ImplicitRequirementsAnalyzer
+public class ImplicitRequirementsAnalyzer: IImplicitRequirementsAnalyzer
 {
     private readonly ILlamaService _llamaService;
     private readonly ILogger<ImplicitRequirementsAnalyzer> _logger;
-    private readonly TextProcessingService _textProcessingService;
+    private readonly ITextProcessingService _textProcessingService;
 
     public ImplicitRequirementsAnalyzer(
         ILlamaService llamaService,
         ILogger<ImplicitRequirementsAnalyzer> logger,
-        TextProcessingService textProcessingService)
+        ITextProcessingService textProcessingService)
     {
         _llamaService = llamaService;
         _logger = logger;

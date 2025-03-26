@@ -1,26 +1,25 @@
 ﻿using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Backforge.Core.Models;
+using Backforge.Core.Services.LLamaCore;
+using Backforge.Core.Services.RequirementAnalyzerCore.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.RequirementAnalyzerCore;
 
-public class AnalysisValidationService
+public class AnalysisValidationService: IAnalysisValidationService
 {
     private readonly ILlamaService _llamaService;
     private readonly ILogger<AnalysisValidationService> _logger;
-    private readonly TextProcessingService _textProcessingService;
     private readonly IReadOnlySet<string> _technicalTerms;
 
     public AnalysisValidationService(
         ILlamaService llamaService,
-        ILogger<AnalysisValidationService> logger,
-        TextProcessingService textProcessingService)
+        ILogger<AnalysisValidationService> logger)
     {
         _llamaService = llamaService;
         _logger = logger;
-        _textProcessingService = textProcessingService;
-        
+
         _technicalTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "api", "interface", "database", "schema", "authentication", "authorization",

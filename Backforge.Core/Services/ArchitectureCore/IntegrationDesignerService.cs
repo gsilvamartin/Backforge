@@ -2,44 +2,37 @@
 using Backforge.Core.Models;
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ArchitectureCore;
 
-public class IntegrationDesignerService : IIntegrationDesigner
+public class IntegrationDesignerService(
+    ILlamaService llamaService,
+    ILogger<IntegrationDesignerService> logger)
+    : IIntegrationDesigner
 {
-    private readonly ILlamaService _llamaService;
-    private readonly ILogger<IntegrationDesignerService> _logger;
-
-    public IntegrationDesignerService(
-        ILlamaService llamaService,
-        ILogger<IntegrationDesignerService> logger)
-    {
-        _llamaService = llamaService;
-        _logger = logger;
-    }
-
     public async Task<IntegrationDesignResult> DesignIntegrationsAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
         var integrationPoints = await IdentifyIntegrationPointsAsync(
-            context, components, layers, options, cancellationToken);
+            context, components, cancellationToken);
 
-        var protocols = await DetermineIntegrationProtocolsAsync(
-            integrationPoints, options, cancellationToken);
+        var protocolsTask = DetermineIntegrationProtocolsAsync(
+            integrationPoints, cancellationToken);
 
-        var dataFlows = await DesignDataFlowsAsync(
+        var dataFlowsTask = DesignDataFlowsAsync(
             context, components, integrationPoints, cancellationToken);
+
+        await Task.WhenAll(protocolsTask, dataFlowsTask);
 
         return new IntegrationDesignResult
         {
             IntegrationPoints = integrationPoints,
-            IntegrationProtocols = protocols,
-            DataFlows = dataFlows,
+            IntegrationProtocols = await protocolsTask,
+            DataFlows = await dataFlowsTask,
             Gateways = await IdentifyGatewaysAsync(integrationPoints, cancellationToken),
             Constraints = await IdentifyIntegrationConstraintsAsync(integrationPoints, cancellationToken)
         };
@@ -48,14 +41,11 @@ public class IntegrationDesignerService : IIntegrationDesigner
     private async Task<List<IntegrationPoint>> IdentifyIntegrationPointsAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
         var prompt = $"""
                       Identify integration points for:
                       Components: {JsonSerializer.Serialize(components.Components.Select(c => new { c.Name, c.Type }))}
-                      Layers: {JsonSerializer.Serialize(layers.Layers)}
                       Requirements: {context.UserRequirementText}
 
                       Return integration points with:
@@ -64,18 +54,16 @@ public class IntegrationDesignerService : IIntegrationDesigner
                       - Interaction type
                       """;
 
-        return await _llamaService.GetStructuredResponseAsync<List<IntegrationPoint>>(prompt, cancellationToken);
+        return await llamaService.GetStructuredResponseAsync<List<IntegrationPoint>>(prompt, cancellationToken);
     }
 
     private async Task<List<IntegrationProtocol>> DetermineIntegrationProtocolsAsync(
         List<IntegrationPoint> integrationPoints,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
         var prompt = $"""
                       Define protocols for these integration points:
                       {JsonSerializer.Serialize(integrationPoints)}
-                      Options: {JsonSerializer.Serialize(options)}
 
                       Return protocols with:
                       - IntegrationPointId
@@ -83,7 +71,7 @@ public class IntegrationDesignerService : IIntegrationDesigner
                       - Data format
                       """;
 
-        return await _llamaService.GetStructuredResponseAsync<List<IntegrationProtocol>>(prompt, cancellationToken);
+        return await llamaService.GetStructuredResponseAsync<List<IntegrationProtocol>>(prompt, cancellationToken);
     }
 
     private async Task<List<DataFlow>> DesignDataFlowsAsync(
@@ -105,7 +93,7 @@ public class IntegrationDesignerService : IIntegrationDesigner
                       - Frequency
                       """;
 
-        return await _llamaService.GetStructuredResponseAsync<List<DataFlow>>(prompt, cancellationToken);
+        return await llamaService.GetStructuredResponseAsync<List<DataFlow>>(prompt, cancellationToken);
     }
 
     private async Task<List<GatewayComponent>> IdentifyGatewaysAsync(
@@ -122,7 +110,7 @@ public class IntegrationDesignerService : IIntegrationDesigner
                       - Managed endpoints
                       """;
 
-        return await _llamaService.GetStructuredResponseAsync<List<GatewayComponent>>(prompt,
+        return await llamaService.GetStructuredResponseAsync<List<GatewayComponent>>(prompt,
             cancellationToken);
     }
 
@@ -150,13 +138,13 @@ public class IntegrationDesignerService : IIntegrationDesigner
 
         try
         {
-            return await _llamaService.GetStructuredResponseAsync<List<IntegrationConstraint>>(
+            return await llamaService.GetStructuredResponseAsync<List<IntegrationConstraint>>(
                 prompt, cancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to identify integration constraints");
-            return new List<IntegrationConstraint>();
+            logger.LogError(ex, "Failed to identify integration constraints");
+            return [];
         }
     }
 }

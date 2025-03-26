@@ -11,5 +11,5 @@ public class ArchitectureComponent
     public List<string> Dependencies { get; set; } = new();
     public List<string> ProvidedInterfaces { get; set; } = new();
     public List<string> RequiredInterfaces { get; set; } = new();
-    public Dictionary<string, string> Configuration { get; set; } = new();
+    public Dictionary<string, object> Configuration { get; set; } = new();
 }

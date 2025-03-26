@@ -2,6 +2,7 @@
 using Backforge.Core.Models;
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ArchitectureCore;
@@ -9,25 +10,21 @@ namespace Backforge.Core.Services.ArchitectureCore;
 public class ScalabilityPlannerService : IScalabilityPlanner
 {
     private readonly ILlamaService _llamaService;
-    private readonly ILogger<ScalabilityPlannerService> _logger;
 
     public ScalabilityPlannerService(
         ILlamaService llamaService,
         ILogger<ScalabilityPlannerService> logger)
     {
         _llamaService = llamaService;
-        _logger = logger;
     }
 
     public async Task<ScalabilityPlan> CreateScalabilityPlanAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
         IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
-        var prompt = BuildScalabilityPrompt(context, components, layers, integrations, options);
+        var prompt = BuildScalabilityPrompt(context, components, integrations);
         var plan = await _llamaService.GetStructuredResponseAsync<ScalabilityPlan>(prompt, cancellationToken);
 
         plan.ComponentRecommendations = await CompleteComponentRecommendationsAsync(
@@ -36,19 +33,16 @@ public class ScalabilityPlannerService : IScalabilityPlanner
         return plan;
     }
 
-    private string BuildScalabilityPrompt(
+    private static string BuildScalabilityPrompt(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
-        IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options)
+        IntegrationDesignResult integrations)
     {
         return $"""
                 Create scalability plan for:
                 Components: {JsonSerializer.Serialize(components.Components.Select(c => new { c.Name, c.Type }))}
                 Data Flows: {JsonSerializer.Serialize(integrations.DataFlows)}
                 Requirements: {context.UserRequirementText}
-                Options: {JsonSerializer.Serialize(options)}
 
                 Include:
                 - Horizontal scaling strategies

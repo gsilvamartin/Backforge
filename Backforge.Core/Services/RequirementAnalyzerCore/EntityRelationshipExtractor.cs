@@ -1,17 +1,19 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using Backforge.Core.Services.LLamaCore;
+using Backforge.Core.Services.RequirementAnalyzerCore.Interfaces;
+using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.RequirementAnalyzerCore;
 
-public class EntityRelationshipExtractor
+public class EntityRelationshipExtractor: IEntityRelationshipExtractor
 {
     private readonly ILlamaService _llamaService;
     private readonly ILogger<EntityRelationshipExtractor> _logger;
-    private readonly TextProcessingService _textProcessingService;
+    private readonly ITextProcessingService _textProcessingService;
 
     public EntityRelationshipExtractor(
         ILlamaService llamaService,
         ILogger<EntityRelationshipExtractor> logger,
-        TextProcessingService textProcessingService)
+        ITextProcessingService textProcessingService)
     {
         _llamaService = llamaService;
         _logger = logger;

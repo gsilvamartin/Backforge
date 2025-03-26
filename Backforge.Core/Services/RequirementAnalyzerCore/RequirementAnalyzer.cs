@@ -9,28 +9,23 @@ namespace Backforge.Core.Services.RequirementAnalyzerCore;
 
 public class RequirementAnalyzer : IRequirementAnalyzer
 {
-    private readonly ILlamaService _llamaService;
     private readonly ILogger<RequirementAnalyzer> _logger;
-    private readonly EntityRelationshipExtractor _entityExtractor;
-    private readonly ImplicitRequirementsAnalyzer _implicitAnalyzer;
-    private readonly ArchitecturalDecisionService _decisionService;
-    private readonly AnalysisValidationService _validationService;
-    private readonly TextProcessingService _textProcessingService;
-    private readonly TimeSpan _defaultTimeout;
+    private readonly IEntityRelationshipExtractor _entityExtractor;
+    private readonly IImplicitRequirementsAnalyzer _implicitAnalyzer;
+    private readonly IArchitecturalDecisionService _decisionService;
+    private readonly IAnalysisValidationService _validationService;
+    private readonly ITextProcessingService _textProcessingService;
     private readonly TimeSpan _extendedTimeout;
 
     public RequirementAnalyzer(
-        ILlamaService llamaService,
         ILogger<RequirementAnalyzer> logger,
-        EntityRelationshipExtractor entityExtractor,
-        ImplicitRequirementsAnalyzer implicitAnalyzer,
-        ArchitecturalDecisionService decisionService,
-        AnalysisValidationService validationService,
-        TextProcessingService textProcessingService,
-        TimeSpan? defaultTimeout = null,
+        IEntityRelationshipExtractor entityExtractor,
+        IImplicitRequirementsAnalyzer implicitAnalyzer,
+        IArchitecturalDecisionService decisionService,
+        IAnalysisValidationService validationService,
+        ITextProcessingService textProcessingService,
         TimeSpan? extendedTimeout = null)
     {
-        _llamaService = llamaService ?? throw new ArgumentNullException(nameof(llamaService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _entityExtractor = entityExtractor ?? throw new ArgumentNullException(nameof(entityExtractor));
         _implicitAnalyzer = implicitAnalyzer ?? throw new ArgumentNullException(nameof(implicitAnalyzer));
@@ -38,7 +33,6 @@ public class RequirementAnalyzer : IRequirementAnalyzer
         _validationService = validationService ?? throw new ArgumentNullException(nameof(validationService));
         _textProcessingService =
             textProcessingService ?? throw new ArgumentNullException(nameof(textProcessingService));
-        _defaultTimeout = defaultTimeout ?? TimeSpan.FromSeconds(30);
         _extendedTimeout = extendedTimeout ?? TimeSpan.FromSeconds(45);
     }
 
@@ -138,10 +132,10 @@ public class RequirementAnalyzer : IRequirementAnalyzer
 
         try
         {
-            int wordCount = Regex.Matches(text, @"\b\w+\b").Count;
-            int sentenceCount = Regex.Matches(text, @"[.!?]+").Count;
-            int technicalTermCount = _validationService.CountTechnicalTerms(text);
-            int conditionalCount = Regex.Matches(
+            var wordCount = Regex.Matches(text, @"\b\w+\b").Count;
+            var sentenceCount = Regex.Matches(text, @"[.!?]+").Count;
+            var technicalTermCount = _validationService.CountTechnicalTerms(text);
+            var conditionalCount = Regex.Matches(
                 text,
                 @"\b(if|when|unless|provided that|assuming)\b",
                 RegexOptions.IgnoreCase).Count;

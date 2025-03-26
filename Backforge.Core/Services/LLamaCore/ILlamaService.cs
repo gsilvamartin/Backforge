@@ -1,4 +1,4 @@
-﻿namespace Backforge.Core.Services;
+﻿namespace Backforge.Core.Services.LLamaCore;
 
 public interface ILlamaService
 {

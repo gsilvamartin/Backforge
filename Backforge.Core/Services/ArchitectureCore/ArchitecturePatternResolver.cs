@@ -2,6 +2,7 @@
 using Backforge.Core.Models;
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ArchitectureCore;
@@ -23,10 +24,9 @@ public class ArchitecturePatternResolver : IArchitecturePatternResolver
 
     public async Task<PatternResolutionResult> ResolvePatternsAsync(
         AnalysisContext context,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
-        var prompt = BuildPatternSelectionPrompt(context, options);
+        var prompt = BuildPatternSelectionPrompt(context);
         var selectedPatternNames =
             await _llamaService.GetStructuredResponseAsync<List<string>>(prompt, cancellationToken);
 
@@ -37,15 +37,6 @@ public class ArchitecturePatternResolver : IArchitecturePatternResolver
                 .ToList(),
             PatternEvaluation = await EvaluatePatterns(selectedPatternNames, context, cancellationToken)
         };
-    }
-
-    public async Task<PatternCompatibilityReport> EvaluatePatternCompatibilityAsync(
-        List<ArchitecturePattern> patterns,
-        AnalysisContext context,
-        CancellationToken cancellationToken)
-    {
-        var prompt = BuildCompatibilityEvaluationPrompt(patterns, context);
-        return await _llamaService.GetStructuredResponseAsync<PatternCompatibilityReport>(prompt, cancellationToken);
     }
 
     private async Task<PatternEvaluationResult> EvaluatePatterns(
@@ -72,7 +63,7 @@ public class ArchitecturePatternResolver : IArchitecturePatternResolver
             prompt, cancellationToken);
     }
 
-    private List<ArchitecturePattern> InitializeKnownPatterns()
+    private static List<ArchitecturePattern> InitializeKnownPatterns()
     {
         return
         [
@@ -202,31 +193,15 @@ public class ArchitecturePatternResolver : IArchitecturePatternResolver
         ];
     }
 
-    private string BuildPatternSelectionPrompt(AnalysisContext context, ArchitectureGenerationOptions options)
+    private string BuildPatternSelectionPrompt(AnalysisContext context)
     {
         return $"""
                 Select appropriate architecture patterns for:
                 Requirements: {context.UserRequirementText}
                 Entities: {string.Join(", ", context.ExtractedEntities)}
-                Options: {JsonSerializer.Serialize(options)}
-
                 Available Patterns: {string.Join(", ", _knownPatterns.Select(p => p.Name))}
 
                 Return list of selected pattern names.
-                """;
-    }
-
-    private string BuildCompatibilityEvaluationPrompt(List<ArchitecturePattern> patterns, AnalysisContext context)
-    {
-        return $"""
-                Evaluate pattern compatibility for:
-                Patterns: {JsonSerializer.Serialize(patterns)}
-                Requirements: {context.UserRequirementText}
-
-                Provide detailed compatibility report with:
-                - Scores for each pattern
-                - Recommended combinations
-                - Potential issues
                 """;
     }
 }

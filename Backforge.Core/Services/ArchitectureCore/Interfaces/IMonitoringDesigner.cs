@@ -8,9 +8,6 @@ public interface IMonitoringDesigner
     Task<MonitoringDesign> DesignMonitoringAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
         IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken);
-
 }

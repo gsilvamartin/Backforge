@@ -2,33 +2,26 @@
 using Backforge.Core.Models;
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ArchitectureCore;
 
-public class MonitoringDesignerService : IMonitoringDesigner
+public class MonitoringDesignerService(
+    ILlamaService llamaService,
+    ILogger<MonitoringDesignerService> logger)
+    : IMonitoringDesigner
 {
-    private readonly ILlamaService _llamaService;
-    private readonly ILogger<MonitoringDesignerService> _logger;
-
-    public MonitoringDesignerService(
-        ILlamaService llamaService,
-        ILogger<MonitoringDesignerService> logger)
-    {
-        _llamaService = llamaService;
-        _logger = logger;
-    }
-
     public async Task<MonitoringDesign> DesignMonitoringAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
         IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
-        var prompt = BuildMonitoringPrompt(context, components, layers, integrations, options);
-        var design = await _llamaService.GetStructuredResponseAsync<MonitoringDesign>(prompt, cancellationToken);
+        logger.LogDebug("Designing monitoring solution");
+        
+        var prompt = BuildMonitoringPrompt(context, components, integrations);
+        var design = await llamaService.GetStructuredResponseAsync<MonitoringDesign>(prompt, cancellationToken);
 
         design.ComponentsMonitoring = await CompleteComponentMonitoringAsync(
             components.Components, design.ComponentsMonitoring, cancellationToken);
@@ -39,16 +32,13 @@ public class MonitoringDesignerService : IMonitoringDesigner
     private string BuildMonitoringPrompt(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
-        IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options)
+        IntegrationDesignResult integrations)
     {
         return $"""
                 Design monitoring solution for:
                 Components: {JsonSerializer.Serialize(components.Components)}
                 Data Flows: {JsonSerializer.Serialize(integrations.DataFlows)}
                 Requirements: {context.UserRequirementText}
-                Options: {JsonSerializer.Serialize(options)}
 
                 Include:
                 - Component-level monitoring
@@ -77,7 +67,7 @@ public class MonitoringDesignerService : IMonitoringDesigner
                       """;
 
         var additionalMonitoring =
-            await _llamaService.GetStructuredResponseAsync<List<MonitoringDesign.ComponentMonitoring>>(
+            await llamaService.GetStructuredResponseAsync<List<MonitoringDesign.ComponentMonitoring>>(
                 prompt, cancellationToken);
 
         return existingMonitoring.Concat(additionalMonitoring).ToList();

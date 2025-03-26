@@ -2,6 +2,7 @@
 using Backforge.Core.Models;
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
+using Backforge.Core.Services.LLamaCore;
 using Microsoft.Extensions.Logging;
 
 namespace Backforge.Core.Services.ArchitectureCore;
@@ -22,15 +23,12 @@ public class ResilienceDesignerService : IResilienceDesigner
     public async Task<ResilienceDesign> DesignResilienceAsync(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
         IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken)
     {
-        var prompt = BuildResiliencePrompt(context, components, layers, integrations, options);
+        var prompt = BuildResiliencePrompt(context, components, integrations);
         var design = await _llamaService.GetStructuredResponseAsync<ResilienceDesign>(prompt, cancellationToken);
 
-        // Complete fault tolerance strategies
         design.FaultTolerance = await CompleteFaultToleranceStrategiesAsync(
             components.Components, design.FaultTolerance, cancellationToken);
 
@@ -40,16 +38,13 @@ public class ResilienceDesignerService : IResilienceDesigner
     private string BuildResiliencePrompt(
         AnalysisContext context,
         ComponentDesignResult components,
-        LayerDesignResult layers,
-        IntegrationDesignResult integrations,
-        ArchitectureGenerationOptions options)
+        IntegrationDesignResult integrations)
     {
         return $"""
                 Design resilience strategies for:
                 Components: {JsonSerializer.Serialize(components.Components)}
                 Integration Points: {JsonSerializer.Serialize(integrations.IntegrationPoints)}
                 Requirements: {context.UserRequirementText}
-                Options: {JsonSerializer.Serialize(options)}
 
                 Include:
                 - Fault tolerance strategies
@@ -64,10 +59,10 @@ public class ResilienceDesignerService : IResilienceDesigner
         CancellationToken cancellationToken)
     {
         var missingComponents = components
-            .Where(c => !existingStrategies.Any(s => s.ComponentId == c.Id))
+            .Where(c => existingStrategies.All(s => s.ComponentId != c.Id))
             .ToList();
 
-        if (!missingComponents.Any()) return existingStrategies;
+        if (missingComponents.Count == 0) return existingStrategies;
 
         var prompt = $"""
                       Add fault tolerance strategies for these components:

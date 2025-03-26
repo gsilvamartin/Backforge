@@ -7,6 +7,5 @@ public interface IArchitecturePatternResolver
 {
     Task<PatternResolutionResult> ResolvePatternsAsync(
         AnalysisContext context,
-        ArchitectureGenerationOptions options,
         CancellationToken cancellationToken);
 }
