@@ -14,6 +14,7 @@
       <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.3" />
       <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.3" />
       <PackageReference Include="Ollama" Version="1.15.0" />
+      <PackageReference Include="Spectre.Console" Version="0.49.1" />
     </ItemGroup>
 
 </Project>

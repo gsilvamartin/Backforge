@@ -236,7 +236,7 @@ public class PathProcessor
             ".gitignore", ".dockerignore", "README.md", "LICENSE",
             "package.json", "package-lock.json", "yarn.lock",
             ".env", ".env.example", ".editorconfig",
-            "Makefile", "Gemfile", "Pipfile"
+            "Makefile", "Gemfile", "Pipfile", ".gitignore"
         };
 
         return commonRootFiles.Contains(fileName, StringComparer.OrdinalIgnoreCase);

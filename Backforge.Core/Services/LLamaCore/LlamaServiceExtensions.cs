@@ -117,6 +117,85 @@ public static class LlamaServiceExtensions
         }
     }
 
+    public static async Task<string> GenerateCodeAsync(
+        this ILlamaService llamaService,
+        string prompt,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(llamaService);
+        ArgumentNullException.ThrowIfNull(prompt);
+
+        var codeGenerationPrompt = $"""
+                                    IMPORTANT INSTRUCTIONS - STRICT COMPLIANCE REQUIRED:
+
+                                    1. Generate ONLY the requested code without adding ANY additional explanation.
+                                    2. DO NOT include code block markers like ``` or any other text beyond the code.
+                                    3. The code must be complete, functional, and follow best practices for the language in question.
+                                    4. Include all necessary imports/includes at the beginning of the file.
+                                    5. DO NOT add introductory or explanatory comments before or after the code.
+
+                                    Remember: Your response should contain ONLY clean source code, as if you were writing directly to a file.
+
+                                    CODE REQUEST:
+                                    {prompt}
+                                    """;
+
+        return await llamaService.GetLlamaResponseAsync(codeGenerationPrompt, cancellationToken);
+    }
+
+    public static async Task<string> GenerateFileContentAsync(
+        this ILlamaService llamaService,
+        string prompt,
+        string fileType = "code",
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(llamaService);
+        ArgumentNullException.ThrowIfNull(prompt);
+
+        var instructionsBasedOnType = fileType.ToLower() switch
+        {
+            "code" => """
+                      1. Generate ONLY the requested code without adding ANY additional explanation.
+                      2. Include all necessary imports/includes at the beginning of the file.
+                      3. The code must be complete, functional, and follow best practices for the language in question.
+                      """,
+
+            "documentation" => """
+                               1. Generate clean, well-structured documentation content.
+                               2. Use appropriate formatting and headings.
+                               3. Be comprehensive yet concise.
+                               """,
+
+            "configuration" => """
+                               1. Generate valid configuration content in the appropriate format (JSON, YAML, XML, etc.)
+                               2. Include necessary comments where appropriate for the format.
+                               3. Use proper indentation and structure for the configuration format.
+                               """,
+
+            _ => """
+                 1. Generate clean, properly formatted content appropriate for the requested file type.
+                 2. Follow best practices for the specific file format.
+                 3. Ensure the content is complete and ready to use.
+                 """
+        };
+
+        var fileGenerationPrompt = $"""
+                                    IMPORTANT INSTRUCTIONS - STRICT COMPLIANCE REQUIRED:
+
+                                    {instructionsBasedOnType}
+
+                                    GENERAL REQUIREMENTS:
+                                    1. DO NOT include code block markers like ``` or any other text beyond the actual file content.
+                                    2. DO NOT add introductory or explanatory comments before or after the content.
+                                    3. Your response should contain ONLY the file content, as if you were writing directly to a file.
+
+                                    FILE CONTENT REQUEST:
+                                    {prompt}
+                                    """;
+
+        return await llamaService.GetLlamaResponseAsync(fileGenerationPrompt, cancellationToken);
+    }
+
     private static string CleanAndValidateJsonResponse(string response, bool expectArray)
     {
         response = response.Trim();

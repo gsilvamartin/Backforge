@@ -157,21 +157,21 @@ public class RequirementAnalyzer : IRequirementAnalyzer
         }
     }
 
-    public Task<List<string>> InferImplicitRequirementsAsync(
+    private Task<List<string>> InferImplicitRequirementsAsync(
         AnalysisContext context,
         CancellationToken cancellationToken = default)
     {
         return _implicitAnalyzer.InferImplicitRequirementsAsync(context, cancellationToken);
     }
 
-    public Task<List<DecisionPoint>> SuggestArchitecturalDecisionsAsync(
+    private Task<List<DecisionPoint>> SuggestArchitecturalDecisionsAsync(
         AnalysisContext context,
         CancellationToken cancellationToken = default)
     {
         return _decisionService.SuggestArchitecturalDecisionsAsync(context, cancellationToken);
     }
 
-    public Task<RequirementAnalysisResult> ValidateAnalysisAsync(
+    private Task<RequirementAnalysisResult> ValidateAnalysisAsync(
         AnalysisContext context,
         CancellationToken cancellationToken = default)
     {

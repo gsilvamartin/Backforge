@@ -9,4 +9,5 @@ public class ProjectFile
     public string Path { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string Template { get; set; } = string.Empty;
+    public string Purpose { get; set; } = string.Empty;
 }

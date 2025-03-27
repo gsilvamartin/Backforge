@@ -9,11 +9,15 @@ namespace Backforge.Core.Services.StructureGeneratorCore;
 
 /// <summary>
 /// Service responsible for generating project file and folder structures based on architecture blueprints
+/// with exactly three iterations for progressive refinement
 /// </summary>
 public class ProjectStructureGeneratorService : IProjectStructureGeneratorService
 {
     private readonly ILlamaService _llamaService;
     private readonly ILogger<ProjectStructureGeneratorService> _logger;
+
+    // Fixed at exactly 3 iterations as required
+    private const int FIXED_ITERATION_COUNT = 3;
 
     public ProjectStructureGeneratorService(
         ILlamaService llamaService,
@@ -30,16 +34,25 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
         ArchitectureBlueprint blueprint,
         CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Generating project structure for blueprint {BlueprintId}", blueprint.BlueprintId);
+        _logger.LogInformation("Generating project structure for blueprint {BlueprintId} with fixed 3-stage process",
+            blueprint.BlueprintId);
 
         try
         {
-            var projectStructure = await GenerateStructureAsync(blueprint, cancellationToken);
+            var iteration1Structure = await GenerateIteration1Async(blueprint, cancellationToken);
+            _logger.LogInformation("Iteration 1 completed for blueprint {BlueprintId}", blueprint.BlueprintId);
 
-            _logger.LogInformation("Project structure successfully generated for blueprint {BlueprintId}",
+            var iteration2Structure = await GenerateIteration2Async(blueprint, iteration1Structure, cancellationToken);
+            _logger.LogInformation("Iteration 2 completed for blueprint {BlueprintId}", blueprint.BlueprintId);
+
+            var finalStructure = await GenerateIteration3Async(blueprint, iteration2Structure, cancellationToken);
+            _logger.LogInformation("Iteration 3 completed for blueprint {BlueprintId}", blueprint.BlueprintId);
+
+            _logger.LogInformation(
+                "Project structure successfully generated with 3 iterations for blueprint {BlueprintId}",
                 blueprint.BlueprintId);
 
-            return projectStructure;
+            return finalStructure;
         }
         catch (Exception ex)
         {
@@ -50,9 +63,9 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
     }
 
     /// <summary>
-    /// Generates the project structure based on the blueprint
+    /// Iteration 1: Generates the core project structure focusing on main architecture
     /// </summary>
-    private async Task<ProjectStructure> GenerateStructureAsync(
+    private async Task<ProjectStructure> GenerateIteration1Async(
         ArchitectureBlueprint blueprint,
         CancellationToken cancellationToken)
     {
@@ -80,9 +93,10 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
         }));
 
         var prompt = $"""
-                      You are an elite software architect with decades of experience building enterprise-grade systems. Your task is to create the MOST DETAILED, PRODUCTION-READY project structure possible.
+                      You are an elite software architect with decades of experience building enterprise-grade systems. 
+                      This is ITERATION 1 of 3. In this first iteration, focus on creating the CORE PROJECT STRUCTURE.
 
-                      Generate a COMPLETE project implementation blueprint for:
+                      Generate the foundation of a project implementation blueprint for:
 
                       Project Context:
                       - User Requirement: {blueprint.Context?.UserRequirementText ?? "N/A"}
@@ -95,66 +109,123 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
                       Data Flows:
                       {dataFlowsJson}
 
-                      YOUR RESPONSE MUST INCLUDE A COMPREHENSIVE FILE-BY-FILE STRUCTURE WITH:
+                      FOR ITERATION 1, FOCUS ONLY ON:
 
-                      1. EXHAUSTIVE SOURCE CODE FILES:
-                         - Implementation files with EXACT naming following technology conventions
-                         - EVERY interface, class, and module needed for each component
-                         - Complete controller/API endpoint files with method signatures
-                         - Data access layer with SPECIFIC file names for repositories/DAOs
-                         - Domain model files with properties and relationships defined
-                         - Service layer implementations with business logic organization
-                         - Framework-specific configuration files with expected content notes
-                         - Utility classes with function signatures
+                      1. PRIMARY SOURCE CODE FILES:
+                         - Main implementation files with correct naming following technology conventions
+                         - Core interfaces, classes, and modules needed for each component
+                         - Primary controller/API endpoint files
+                         - Essential domain model files with key properties
+                         - Main service layer implementations
+                         - Basic framework configuration files
 
-                      2. COMPLETE TEST ECOSYSTEM:
-                         - Unit test files for EACH business logic component
-                         - Integration test files for ALL component interactions
-                         - End-to-end test scenarios with ACTUAL test case names
-                         - Test configuration files tailored to different environments
+                      2. PROJECT FOUNDATION:
+                         - Root directory structure
+                         - Primary package/module organization
+                         - Main build configuration files
+                         - Basic dependency management files
+
+                      For each file, provide:
+                      1. Exact file path with correct extension
+                      2. Brief description of its purpose
+                      3. Primary classes/functions it would contain
+
+                      Do not attempt to be comprehensive yet - this is iteration 1 of 3. Focus on getting the core architecture correct.
+                      Use actual meaningful names, not placeholders.
+                      """;
+
+        var projectStructure =
+            await _llamaService.GetStructuredResponseAsync<ProjectStructure>(prompt, cancellationToken);
+
+        _logger.LogDebug("Received iteration 1 structure with {DirectoryCount} root directories",
+            projectStructure.RootDirectories.Count);
+
+        ProcessPaths(projectStructure, "");
+
+        return projectStructure;
+    }
+
+    /// <summary>
+    /// Iteration 2: Enhances the structure with testing and configurations
+    /// </summary>
+    private async Task<ProjectStructure> GenerateIteration2Async(
+        ArchitectureBlueprint blueprint,
+        ProjectStructure existingStructure,
+        CancellationToken cancellationToken)
+    {
+        var existingStructureJson = JsonSerializer.Serialize(existingStructure);
+
+        var prompt = $"""
+                      You are an elite software architect with decades of experience building enterprise-grade systems.
+                      This is ITERATION 2 of 3. In this second iteration, focus on ENHANCING THE PROJECT STRUCTURE with tests and configurations.
+
+                      The existing project structure from iteration 1 is:
+                      {existingStructureJson}
+
+                      FOR ITERATION 2, FOCUS ON ADDING:
+
+                      1. COMPLETE TEST ECOSYSTEM:
+                         - Unit test files for business logic components
+                         - Integration test files for component interactions
+                         - Test configuration files for different environments
                          - Mock data generators and test fixtures
                          - Test utilities and helper classes
-                         - Performance/load test scenarios
 
-                      3. DETAILED CONFIGURATION SYSTEM:
-                         - ALL environment configuration files (local, dev, test, staging, prod)
-                         - Application properties files with SAMPLE properties
-                         - Security configuration with authentication/authorization setup
-                         - Database connection configuration for primary and replica DBs
-                         - Caching configuration files
-                         - Logging configuration with different log levels
-                         - Feature flag configuration
+                      2. DETAILED CONFIGURATION SYSTEM:
+                         - Environment configuration files (dev, test, staging, prod)
+                         - Application properties files with sample properties
+                         - Security configuration with authentication setup
+                         - Database connection configuration
+                         - Logging configuration
 
-                      4. COMPLETE DOCUMENTATION STRUCTURE:
-                         - API documentation with endpoint descriptions
-                         - Database schema documentation
-                         - Architecture decision records (ADRs)
-                         - Component interaction diagrams sources
-                         - Setup guides with step-by-step instructions
-                         - Developer onboarding documentation
-                         - Internal API specifications
-                         - External API integration guides
+                      3. DOCUMENTATION STRUCTURE:
+                         - API documentation
+                         - Setup guides
+                         - Architecture documentation
 
-                      5. INFRASTRUCTURE AS CODE:
-                         - Dockerfile WITH sample instructions
+                      4. INFRASTRUCTURE AS CODE:
+                         - Dockerfile with sample instructions
                          - docker-compose.yml with service definitions
-                         - Kubernetes manifests for ALL microservices
-                         - Infrastructure provisioning scripts (Terraform/CloudFormation)
-                         - Service mesh configuration
-                         - Network policy definitions
-                         - Auto-scaling rules
-                         - Database migration scripts
+                         - Basic deployment configuration
 
-                      6. COMPREHENSIVE CI/CD PIPELINE:
-                         - CI workflow definition files with ACTUAL pipeline stages
-                         - CD deployment files for multiple environments
-                         - Quality gate configurations with code coverage thresholds
-                         - Static code analysis configuration
-                         - Security scanning setup
-                         - Artifact repository configuration
-                         - Release management scripts
+                      Preserve all the elements from iteration 1 and add these new elements.
+                      Provide the same level of detail for the new files as in iteration 1.
+                      """;
 
-                      7. CROSS-CUTTING CONCERNS:
+        var enhancedStructure =
+            await _llamaService.GetStructuredResponseAsync<ProjectStructure>(prompt, cancellationToken);
+
+        _logger.LogDebug("Received iteration 2 structure with {DirectoryCount} root directories",
+            enhancedStructure.RootDirectories.Count);
+
+        ProcessPaths(enhancedStructure, "");
+
+        // Merge with previous iteration
+        var mergedStructure = MergeProjectStructures(existingStructure, enhancedStructure);
+
+        return mergedStructure;
+    }
+
+    /// <summary>
+    /// Iteration 3: Finalizes with cross-cutting concerns and additional refinements
+    /// </summary>
+    private async Task<ProjectStructure> GenerateIteration3Async(
+        ArchitectureBlueprint blueprint,
+        ProjectStructure existingStructure,
+        CancellationToken cancellationToken)
+    {
+        var existingStructureJson = JsonSerializer.Serialize(existingStructure);
+
+        var prompt = $"""
+                      You are an elite software architect with decades of experience building enterprise-grade systems.
+                      This is ITERATION 3 of 3. In this final iteration, focus on COMPLETING THE PROJECT STRUCTURE with cross-cutting concerns.
+
+                      The existing project structure from iterations 1 and 2 is:
+                      {existingStructureJson}
+
+                      FOR ITERATION 3, FOCUS ON ADDING:
+
+                      1. CROSS-CUTTING CONCERNS:
                          - Authentication and authorization modules
                          - Instrumentation and monitoring setup
                          - Resilience patterns implementation (circuit breaker, retry)
@@ -164,37 +235,105 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
                          - Error handling framework
                          - Internationalization setup
 
-                      ADDITIONAL REQUIREMENTS:
-                      - Include startup scripts and application bootstrap files
-                      - Include package management files with dependencies listed
-                      - Include database migration/seed scripts with example migrations
-                      - Include monitoring/observability configuration
-                      - Include security hardening configurations
-                      - Include automation scripts for common developer tasks
-                      - Include dependency injection/IoC container setup
+                      2. CI/CD PIPELINE:
+                         - CI workflow definition files with pipeline stages
+                         - CD deployment files for multiple environments
+                         - Quality gate configurations
+                         - Static code analysis configuration
+                         - Security scanning setup
 
-                      FOR EVERY FILE, provide:
-                      1. The EXACT file name with correct extension
-                      2. Brief description of its purpose
-                      3. Key classes/functions/configurations it would contain
-                      4. How it connects to other components
+                      3. ADDITIONAL ELEMENTS:
+                         - Database migration/seed scripts with example migrations
+                         - Monitoring/observability configuration
+                         - Security hardening configurations
+                         - Automation scripts for common developer tasks
+                         - Missing edge cases from iterations 1 and 2
 
-                      The structure MUST adhere to ALL best practices for the specified technologies and patterns while remaining practical for real-world development teams.
-
-                      DO NOT USE PLACEHOLDERS or generic names like "UserController.java" - use SPECIFIC names like "CustomerProfileController.java" with actual resource paths and method names.
-
-                      This structure should be SO COMPLETE that a development team could immediately start implementing without needing additional architectural decisions.
+                      Preserve all the elements from previous iterations and add these final elements.
+                      Provide the same level of detail for the new files as in previous iterations.
+                      Ensure the final structure is comprehensive and production-ready.
                       """;
 
-        var projectStructure =
+        var finalStructure =
             await _llamaService.GetStructuredResponseAsync<ProjectStructure>(prompt, cancellationToken);
 
-        _logger.LogDebug("Received project structure with {DirectoryCount} root directories",
-            projectStructure.RootDirectories.Count);
+        _logger.LogDebug("Received iteration 3 structure with {DirectoryCount} root directories",
+            finalStructure.RootDirectories.Count);
 
-        ProcessPaths(projectStructure, "");
+        ProcessPaths(finalStructure, "");
 
-        return projectStructure;
+        // Merge with previous iterations
+        var mergedStructure = MergeProjectStructures(existingStructure, finalStructure);
+
+        return mergedStructure;
+    }
+
+    /// <summary>
+    /// Merges two project structures, combining their directories and files
+    /// </summary>
+    private ProjectStructure MergeProjectStructures(ProjectStructure base1, ProjectStructure base2)
+    {
+        var result = new ProjectStructure
+        {
+            RootDirectories = new List<ProjectDirectory>()
+        };
+
+        // Add all directories from base1
+        foreach (var dir in base1.RootDirectories)
+        {
+            result.RootDirectories.Add(dir);
+        }
+
+        // Add directories from base2 if they don't exist in base1
+        foreach (var dir2 in base2.RootDirectories)
+        {
+            var existingDir = result.RootDirectories.FirstOrDefault(d => d.Name == dir2.Name);
+
+            if (existingDir == null)
+            {
+                // Directory doesn't exist, add it
+                result.RootDirectories.Add(dir2);
+            }
+            else
+            {
+                // Directory exists, merge subdirectories and files
+                MergeDirectories(existingDir, dir2);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Recursively merges directories
+    /// </summary>
+    private void MergeDirectories(ProjectDirectory target, ProjectDirectory source)
+    {
+        // Add files from source to target if they don't exist
+        foreach (var file in source.Files)
+        {
+            if (!target.Files.Any(f => f.Name == file.Name))
+            {
+                target.Files.Add(file);
+            }
+        }
+
+        // Process subdirectories
+        foreach (var sourceSubDir in source.Subdirectories)
+        {
+            var targetSubDir = target.Subdirectories.FirstOrDefault(d => d.Name == sourceSubDir.Name);
+
+            if (targetSubDir == null)
+            {
+                // Subdirectory doesn't exist in target, add it
+                target.Subdirectories.Add(sourceSubDir);
+            }
+            else
+            {
+                // Subdirectory exists, merge recursively
+                MergeDirectories(targetSubDir, sourceSubDir);
+            }
+        }
     }
 
     /// <summary>

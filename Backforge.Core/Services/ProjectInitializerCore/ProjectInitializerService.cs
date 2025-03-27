@@ -1,4 +1,5 @@
 ﻿// File: Backforge.Core/Services/ProjectInitializerCore/ProjectInitializerServiceService.cs
+
 using Backforge.Core.Models.Architecture;
 using Backforge.Core.Models.ProjectInitializer;
 using Backforge.Core.Models.StructureGenerator;
@@ -70,37 +71,37 @@ public class ProjectInitializerService : IProjectInitializerService
         {
             // Ensure output directory exists
             _directoryService.EnsureDirectoryExists(outputDirectory);
-            
+
             // Normalize project structure paths using the PathProcessor
             var pathProcessor = new PathProcessor(_logger);
             projectStructure = pathProcessor.NormalizeProjectStructure(projectStructure);
 
-            // Two-step approach: First create the directories and files directly, then run project initialization commands
-            
             // Step 1: Create the directory and file structure directly
             _logger.LogInformation("Creating project directory structure in {OutputDirectory}", outputDirectory);
-            var structureCreated = await CreateFilesFromStructureAsync(projectStructure, outputDirectory, cancellationToken);
-            
+            var structureCreated =
+                await CreateFilesFromStructureAsync(projectStructure, outputDirectory, cancellationToken);
+
             if (!structureCreated)
             {
                 result.Success = false;
                 result.Errors.Add("Failed to create project directory structure");
                 return result;
             }
-            
+
             // Step 2: Generate and run project initialization commands (for package managers, git, etc.)
             _logger.LogInformation("Generating project initialization commands");
-            
+
             var commands = await GenerateInitializationCommandsAsync(blueprint, projectStructure, cancellationToken);
 
             if (commands.Count == 0)
             {
                 _logger.LogWarning("No initialization commands were generated for blueprint {BlueprintId}",
                     blueprint.BlueprintId);
-                
+
                 // We still created the structure, so this isn't a failure
                 result.Success = true;
-                result.InitializationSteps.Add("Created project directory structure without additional initialization commands");
+                result.InitializationSteps.Add(
+                    "Created project directory structure without additional initialization commands");
                 return result;
             }
 
@@ -229,11 +230,11 @@ public class ProjectInitializerService : IProjectInitializerService
 
             // Filter out any commands with empty command names
             commands.RemoveAll(command => string.IsNullOrWhiteSpace(command.Command));
-            
+
             // Filter out mkdir and file creation commands since we're handling that directly
-            commands.RemoveAll(command => 
-                command.Command.Equals("mkdir", StringComparison.OrdinalIgnoreCase) || 
-                command.Command.Equals("md", StringComparison.OrdinalIgnoreCase) || 
+            commands.RemoveAll(command =>
+                command.Command.Equals("mkdir", StringComparison.OrdinalIgnoreCase) ||
+                command.Command.Equals("md", StringComparison.OrdinalIgnoreCase) ||
                 command.Command.Equals("touch", StringComparison.OrdinalIgnoreCase) ||
                 command.Command.Equals("echo", StringComparison.OrdinalIgnoreCase) && command.Arguments.Contains(">") ||
                 command.Command.Equals("type", StringComparison.OrdinalIgnoreCase) && command.Arguments.Contains(">"));
@@ -248,7 +249,7 @@ public class ProjectInitializerService : IProjectInitializerService
             throw;
         }
     }
-    
+
     /// <summary>
     /// Creates the necessary files based on the project structure
     /// </summary>
@@ -264,7 +265,7 @@ public class ProjectInitializerService : IProjectInitializerService
             {
                 await CreateDirectoryStructureAsync(rootDir, outputDirectory, cancellationToken);
             }
-            
+
             _logger.LogInformation("All directories and files created successfully");
             return true;
         }
@@ -287,22 +288,22 @@ public class ProjectInitializerService : IProjectInitializerService
         {
             return;
         }
-        
+
         // Create the directory
         var directoryPath = Path.Combine(basePath, directory.Path);
-        
+
         if (!Directory.Exists(directoryPath))
         {
             _logger.LogDebug("Creating directory: {DirectoryPath}", directoryPath);
             Directory.CreateDirectory(directoryPath);
         }
-        
+
         // Create all files in this directory
         foreach (var file in directory.Files)
         {
             await CreateFileAsync(file, basePath, cancellationToken);
         }
-        
+
         // Process subdirectories recursively
         foreach (var subDir in directory.Subdirectories)
         {
@@ -311,7 +312,7 @@ public class ProjectInitializerService : IProjectInitializerService
     }
 
     /// <summary>
-    /// Creates a file with its content
+    /// Creates a file with its content, ignoring cases where a folder with the same name exists
     /// </summary>
     private async Task CreateFileAsync(
         ProjectFile file,
@@ -322,29 +323,51 @@ public class ProjectInitializerService : IProjectInitializerService
         {
             return;
         }
-        
-        // Get the full file path
-        var filePath = Path.Combine(basePath, file.Path);
-        
-        // Ensure the directory exists
-        var directoryPath = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrEmpty(directoryPath) && !Directory.Exists(directoryPath))
+
+        try
         {
-            _logger.LogDebug("Creating directory for file: {DirectoryPath}", directoryPath);
-            Directory.CreateDirectory(directoryPath);
+            // Get the full file path
+            var filePath = Path.Combine(basePath, file.Path);
+
+            // Check if a directory with the same name as the file exists
+            if (Directory.Exists(filePath))
+            {
+                _logger.LogWarning("Cannot create file because a directory with the same name exists: {FilePath}",
+                    filePath);
+                return; // Skip this file and continue with others
+            }
+
+            // Ensure the directory exists
+            var directoryPath = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(directoryPath) && !Directory.Exists(directoryPath))
+            {
+                _logger.LogDebug("Creating directory for file: {DirectoryPath}", directoryPath);
+                Directory.CreateDirectory(directoryPath);
+            }
+
+            // Create the file
+            _logger.LogDebug("Creating file: {FilePath}", filePath);
+
+            // Write content if available, otherwise create an empty file
+            if (!string.IsNullOrEmpty(file.Template))
+            {
+                await File.WriteAllTextAsync(filePath, file.Template, cancellationToken);
+            }
+            else
+            {
+                await using (File.Create(filePath))
+                {
+                    // Create empty file
+                }
+            }
+
+            _logger.LogInformation("Successfully created file: {FilePath}", filePath);
         }
-        
-        // Create the file
-        _logger.LogDebug("Creating file: {FilePath}", filePath);
-        
-        // Write content if available, otherwise create an empty file
-        if (!string.IsNullOrEmpty(file.Template))
+        catch (Exception ex)
         {
-            await File.WriteAllTextAsync(filePath, file.Template, cancellationToken);
-        }
-        else
-        {
-            using (File.Create(filePath)) { }
+            // Log the error but don't throw, to prevent the entire operation from failing
+            _logger.LogError(ex, "Error creating file {FilePath}: {ErrorMessage}",
+                Path.Combine(basePath, file.Path), ex.Message);
         }
     }
 }
