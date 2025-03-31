@@ -23,6 +23,8 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Backforge.Core.Models;
+using ValidationResult = Spectre.Console.ValidationResult;
 
 namespace Backforge.Core;
 
@@ -113,6 +115,11 @@ public class Program
         AnsiConsole.Write(new Rule("[yellow]Press any key to exit[/]").RuleStyle("grey").Centered());
         Console.ReadKey(true);
     }
+
+    // Add field to class:
+    private static bool _isPaused = false;
+    private static bool _requirementsUpdated = false;
+    private static string _currentRequirement = "";
 
     private static void ProcessArguments(string[] args)
     {

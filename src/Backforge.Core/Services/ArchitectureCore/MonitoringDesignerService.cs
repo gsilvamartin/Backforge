@@ -18,7 +18,7 @@ public class MonitoringDesignerService(
         IntegrationDesignResult integrations,
         CancellationToken cancellationToken)
     {
-        logger.LogDebug("Designing monitoring solution");
+        logger.LogInformation("Designing monitoring solution");
         
         var prompt = BuildMonitoringPrompt(context, components, integrations);
         var design = await llamaService.GetStructuredResponseAsync<MonitoringDesign>(prompt, cancellationToken);

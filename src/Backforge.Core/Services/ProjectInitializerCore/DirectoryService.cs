@@ -32,7 +32,7 @@ public class DirectoryService : IDirectoryService
             try
             {
                 Directory.CreateDirectory(directory);
-                _logger.LogDebug("Created directory: {Directory}", directory);
+                _logger.LogInformation("Created directory: {Directory}", directory);
             }
             catch (Exception ex)
             {

@@ -371,9 +371,17 @@ public class ProjectCodeGenerationService : IProjectCodeGenerationService
             foreach (var generatedFile in generatedFiles.Where(f => f != null))
             {
                 implementation.GeneratedFiles.Add(generatedFile);
+                await SaveGeneratedFileAsync(generatedFile, cancellationToken);
                 await _fileTrackerService.TrackFileGeneratedAsync(generatedFile.Path);
             }
         }
+    }
+
+    private static async Task SaveGeneratedFileAsync(
+        GeneratedFile generatedFile,
+        CancellationToken cancellationToken)
+    {
+        await File.WriteAllTextAsync(generatedFile.Path, generatedFile.Content, cancellationToken);
     }
 
     /// <summary>
@@ -590,7 +598,7 @@ public class ProjectCodeGenerationService : IProjectCodeGenerationService
                 existingFile.Metadata["ErrorsFixed"] = errors.Count.ToString();
 
                 filesUpdated++;
-                _logger.LogDebug("Fixed {ErrorCount} build errors in file: {FilePath}", errors.Count, filePath);
+                _logger.LogInformation("Fixed {ErrorCount} build errors in file: {FilePath}", errors.Count, filePath);
             }
             else
             {
@@ -720,7 +728,7 @@ public class ProjectCodeGenerationService : IProjectCodeGenerationService
                 existingFile.Metadata["TestsFixed"] = failures.Count.ToString();
 
                 filesUpdated++;
-                _logger.LogDebug("Fixed implementation to pass {FailureCount} tests in file: {FilePath}",
+                _logger.LogInformation("Fixed implementation to pass {FailureCount} tests in file: {FilePath}",
                     failures.Count, filePath);
             }
             else
@@ -952,7 +960,7 @@ public class ProjectCodeGenerationService : IProjectCodeGenerationService
                 existingFile.Metadata["PreviousCompletionScore"] = fileAnalysis.CompletionScore.ToString();
 
                 filesImproved++;
-                _logger.LogDebug("Improved completeness of file: {FilePath} from score {OldScore}",
+                _logger.LogInformation("Improved completeness of file: {FilePath} from score {OldScore}",
                     filePath, fileAnalysis.CompletionScore);
             }
             else
@@ -1093,7 +1101,7 @@ public class ProjectCodeGenerationService : IProjectCodeGenerationService
                 });
 
                 filesGenerated++;
-                _logger.LogDebug("Generated missing file: {FilePath}", missingFile.Path);
+                _logger.LogInformation("Generated missing file: {FilePath}", missingFile.Path);
             }
             else
             {

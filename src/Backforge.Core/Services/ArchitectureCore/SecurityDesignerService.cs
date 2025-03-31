@@ -18,7 +18,7 @@ public class SecurityDesignerService(
         IntegrationDesignResult integrations,
         CancellationToken cancellationToken)
     {
-        logger.LogDebug("Designing security controls");
+        logger.LogInformation("Designing security controls");
 
         var prompt = BuildSecurityPrompt(context, components, integrations);
         var design = await llamaService.GetStructuredResponseAsync<SecurityDesign>(prompt, cancellationToken);

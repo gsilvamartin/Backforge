@@ -207,7 +207,7 @@ public class ProjectInitializerService : IProjectInitializerService
 
         try
         {
-            _logger.LogDebug("Generating project initialization commands for blueprint {BlueprintId}",
+            _logger.LogInformation("Generating project initialization commands for blueprint {BlueprintId}",
                 blueprint.BlueprintId);
 
             var prompt = _promptBuilder.BuildInitializationPrompt(blueprint, projectStructure);
@@ -294,7 +294,7 @@ public class ProjectInitializerService : IProjectInitializerService
 
         if (!Directory.Exists(directoryPath))
         {
-            _logger.LogDebug("Creating directory: {DirectoryPath}", directoryPath);
+            _logger.LogInformation("Creating directory: {DirectoryPath}", directoryPath);
             Directory.CreateDirectory(directoryPath);
         }
 
@@ -341,12 +341,12 @@ public class ProjectInitializerService : IProjectInitializerService
             var directoryPath = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrEmpty(directoryPath) && !Directory.Exists(directoryPath))
             {
-                _logger.LogDebug("Creating directory for file: {DirectoryPath}", directoryPath);
+                _logger.LogInformation("Creating directory for file: {DirectoryPath}", directoryPath);
                 Directory.CreateDirectory(directoryPath);
             }
 
             // Create the file
-            _logger.LogDebug("Creating file: {FilePath}", filePath);
+            _logger.LogInformation("Creating file: {FilePath}", filePath);
 
             // Write content if available, otherwise create an empty file
             if (!string.IsNullOrEmpty(file.Template))

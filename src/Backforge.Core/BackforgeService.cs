@@ -1,7 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Backforge.Core.Models;
+using Backforge.Core.Models.Architecture;
+using Backforge.Core.Models.CodeGenerator;
+using Backforge.Core.Models.ProjectInitializer;
 using Backforge.Core.Models.StructureGenerator;
 using Backforge.Core.Services.ArchitectureCore.Interfaces;
 using Backforge.Core.Services.ProjectCodeGenerationService;
@@ -14,10 +19,17 @@ using Microsoft.Extensions.Logging;
 namespace Backforge.Core;
 
 /// <summary>
-/// Main service that coordinates the application workflow
+/// Main service that coordinates the application workflow to generate a project from requirements
 /// </summary>
 public class BackforgeService
 {
+    // Constants
+    private const int TotalWorkflowSteps = 6;
+    private const int MaxFilesToReport = 10;
+    private const double SuccessThreshold = 0.9;
+    private const string CompletionScoreKey = "FinalCompletenessScore";
+
+    // Dependency services
     private readonly ILogger<BackforgeService> _logger;
     private readonly IRequirementAnalyzer _requirementAnalyzer;
     private readonly IArchitectureGenerator _architectureGenerator;
@@ -26,10 +38,9 @@ public class BackforgeService
     private readonly IProjectCodeGenerationService _projectCodeGenerationService;
     private readonly IFileGenerationTrackerService _fileTrackerService;
 
-    // Progress tracking properties
+    // State tracking
     private IProgress<BackforgeProgressUpdate> _progress;
-    private int _totalSteps = 6;
-    private int _currentStep = 0;
+    private int _currentStep;
 
     public BackforgeService(
         ILogger<BackforgeService> logger,
@@ -42,14 +53,10 @@ public class BackforgeService
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _requirementAnalyzer = requirementAnalyzer ?? throw new ArgumentNullException(nameof(requirementAnalyzer));
-        _architectureGenerator =
-            architectureGenerator ?? throw new ArgumentNullException(nameof(architectureGenerator));
-        _projectInitializerService = projectInitializerService ??
-                                     throw new ArgumentNullException(nameof(projectInitializerService));
-        _projectStructureGeneratorService = projectStructureGeneratorService ??
-                                            throw new ArgumentNullException(nameof(projectStructureGeneratorService));
-        _projectCodeGenerationService = projectCodeGenerationService ??
-                                        throw new ArgumentNullException(nameof(projectCodeGenerationService));
+        _architectureGenerator = architectureGenerator ?? throw new ArgumentNullException(nameof(architectureGenerator));
+        _projectInitializerService = projectInitializerService ?? throw new ArgumentNullException(nameof(projectInitializerService));
+        _projectStructureGeneratorService = projectStructureGeneratorService ?? throw new ArgumentNullException(nameof(projectStructureGeneratorService));
+        _projectCodeGenerationService = projectCodeGenerationService ?? throw new ArgumentNullException(nameof(projectCodeGenerationService));
         _fileTrackerService = fileTrackerService ?? throw new ArgumentNullException(nameof(fileTrackerService));
     }
 
@@ -60,7 +67,7 @@ public class BackforgeService
     /// <param name="outputDirectory">Directory where the project will be created</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <param name="progress">Optional progress reporter</param>
-    /// <returns>The task representing the asynchronous operation</returns>
+    /// <returns>The task representing the asynchronous operation with the workflow result</returns>
     public async Task<BackforgeResult> RunAsync(
         string requirementText,
         string outputDirectory,
@@ -73,172 +80,196 @@ public class BackforgeService
 
         try
         {
-            // Step 1.1: Iniciar análise de requisitos
-            UpdateProgress("Analyzing requirements", "Preparing NLP engine for text analysis");
-            _logger.LogInformation("Starting requirement analysis for: {RequirementText}", requirementText);
+            // Execute each workflow step in sequence
+            var analysisContext = await AnalyzeRequirementsAsync(requirementText, cancellationToken, result);
+            
+            if (cancellationToken.IsCancellationRequested) 
+                return CancelOperation(result, "Operation cancelled during requirements analysis");
+                
+            var architectureBlueprint = await GenerateArchitectureAsync(analysisContext, cancellationToken, result);
+            
+            if (cancellationToken.IsCancellationRequested) 
+                return CancelOperation(result, "Operation cancelled during architecture generation");
+                
+            var projectStructure = await GenerateProjectStructureAsync(architectureBlueprint, cancellationToken, result);
+            
+            if (cancellationToken.IsCancellationRequested) 
+                return CancelOperation(result, "Operation cancelled during project structure generation");
+                
+            await InitializeProjectAsync(architectureBlueprint, projectStructure, outputDirectory, cancellationToken, result);
+            
+            if (cancellationToken.IsCancellationRequested) 
+                return CancelOperation(result, "Operation cancelled during project initialization");
+                
+            var projectResult = await GenerateImplementationAsync(analysisContext, architectureBlueprint,
+                projectStructure, cancellationToken, result);
 
-            // Step 1.2: Extração de entidades
-            UpdateProgress("Analyzing requirements", "Extracting key entities from requirements", 25);
-            var requirementContext = await _requirementAnalyzer.AnalyzeRequirementsAsync(
-                requirementText,
-                cancellationToken);
+            if (!cancellationToken.IsCancellationRequested)
+                FinalizeResult(projectResult, result);
 
-            // Detalhes da extração - Entidades
-            if (requirementContext.ExtractedEntities != null && requirementContext.ExtractedEntities.Count > 0)
-            {
-                int entityCounter = 0;
-                foreach (var entity in requirementContext.ExtractedEntities)
-                {
-                    entityCounter++;
-                    UpdateProgress("Analyzing requirements",
-                        $"Entity {entityCounter}/{requirementContext.ExtractedEntities.Count}: {entity}",
-                        35 + (20 * entityCounter / Math.Max(1, requirementContext.ExtractedEntities.Count)));
-                }
-            }
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            return CancelOperation(result, "Operation cancelled");
+        }
+        catch (Exception ex)
+        {
+            return HandleException(ex, result);
+        }
+    }
 
-            // Detalhes da extração - Requisitos inferidos
-            if (requirementContext.InferredRequirements != null && requirementContext.InferredRequirements.Count > 0)
-            {
-                int requirementCounter = 0;
-                foreach (var req in requirementContext.InferredRequirements)
-                {
-                    requirementCounter++;
-                    UpdateProgress("Analyzing requirements",
-                        $"Requirement {requirementCounter}/{requirementContext.InferredRequirements.Count}: {req}",
-                        60 + (20 * requirementCounter / Math.Max(1, requirementContext.InferredRequirements.Count)));
-                }
-            }
+    #region Workflow Steps
 
-            result.ExtractedEntities = requirementContext.ExtractedEntities.Count;
-            result.InferredRequirements = requirementContext.InferredRequirements.Count;
+    /// <summary>
+    /// Step 1: Analyzes the user requirements using NLP
+    /// </summary>
+    private async Task<AnalysisContext> AnalyzeRequirementsAsync(
+        string requirementText,
+        CancellationToken cancellationToken,
+        BackforgeResult result)
+    {
+        using var _ = new LoggingStopwatch(_logger, "Requirement Analysis");
+        UpdateProgress("Analyzing requirements", "Preparing NLP engine for text analysis");
+        _logger.LogInformation("Starting requirement analysis for requirements text of length {Length}", requirementText?.Length ?? 0);
 
-            // Assumimos que o contexto não tem uma propriedade Relationships
-            result.RelationshipsIdentified = 0;
+        if (string.IsNullOrWhiteSpace(requirementText))
+        {
+            throw new ArgumentException("Requirement text cannot be empty or null", nameof(requirementText));
+        }
 
-            UpdateProgress("Analyzing requirements", "Requirements analysis completed", 100,
-                $"Extracted {result.ExtractedEntities} entities and {result.InferredRequirements} requirements");
+        UpdateProgress("Analyzing requirements", "Extracting key entities from requirements", 25);
+        var analysisContext = await _requirementAnalyzer.AnalyzeRequirementsAsync(
+            requirementText,
+            cancellationToken);
 
-            // Step 2: Generate architecture
-            UpdateProgress("Designing architecture", "Selecting architectural patterns");
-            _logger.LogInformation("Requirement analysis completed. Generating architecture...");
+        ReportEntities(analysisContext);
+        ReportInferredRequirements(analysisContext);
 
-            var architectureBlueprint = await _architectureGenerator.GenerateArchitectureAsync(
-                requirementContext,
-                cancellationToken);
+        // Update the result with analysis metrics
+        result.ExtractedEntities = analysisContext.ExtractedEntities?.Count ?? 0;
+        result.InferredRequirements = analysisContext.InferredRequirements?.Count ?? 0;
+        result.RelationshipsIdentified = analysisContext.ExtractedRelationships?.Count ?? 0;
 
-            // Detalhes dos padrões arquiteturais selecionados
-            if (architectureBlueprint.ArchitecturePatterns != null &&
-                architectureBlueprint.ArchitecturePatterns.Count > 0)
-            {
-                int patternCounter = 0;
-                foreach (var pattern in architectureBlueprint.ArchitecturePatterns)
-                {
-                    patternCounter++;
-                    string patternName = pattern.ToString();
-                    UpdateProgress("Designing architecture",
-                        $"Pattern {patternCounter}/{architectureBlueprint.ArchitecturePatterns.Count}: {patternName}",
-                        30 + (30 * patternCounter / Math.Max(1, architectureBlueprint.ArchitecturePatterns.Count)));
-                }
-            }
+        UpdateProgress("Analyzing requirements", "Requirements analysis completed", 100,
+            $"Extracted {result.ExtractedEntities} entities and {result.InferredRequirements} requirements");
 
-            // Detalhes dos componentes identificados
-            if (architectureBlueprint.Components != null && architectureBlueprint.Components.Count > 0)
-            {
-                int componentCounter = 0;
-                foreach (var component in architectureBlueprint.Components)
-                {
-                    componentCounter++;
-                    string componentName = component.ToString();
-                    UpdateProgress("Designing architecture",
-                        $"Component {componentCounter}/{architectureBlueprint.Components.Count}: {componentName}",
-                        60 + (30 * componentCounter / Math.Max(1, architectureBlueprint.Components.Count)));
-                }
-            }
+        return analysisContext;
+    }
 
-            result.Components = architectureBlueprint.Components?.Count ?? 0;
-            result.ArchitecturePatterns = architectureBlueprint.ArchitecturePatterns?.Count ?? 0;
+    /// <summary>
+    /// Step 2: Generates architecture blueprint based on analysis
+    /// </summary>
+    private async Task<ArchitectureBlueprint> GenerateArchitectureAsync(
+        AnalysisContext requirementContext,
+        CancellationToken cancellationToken,
+        BackforgeResult result)
+    {
+        using var _ = new LoggingStopwatch(_logger, "Architecture Generation");
+        UpdateProgress("Designing architecture", "Selecting architectural patterns");
+        _logger.LogInformation("Requirement analysis completed. Generating architecture from {EntityCount} entities and {RequirementCount} requirements", 
+            requirementContext.ExtractedEntities?.Count ?? 0, 
+            requirementContext.InferredRequirements?.Count ?? 0);
 
-            UpdateProgress("Designing architecture", "Architecture blueprint complete", 100,
-                $"Identified {result.Components} components using {result.ArchitecturePatterns} architectural patterns");
+        var architectureBlueprint = await _architectureGenerator.GenerateArchitectureAsync(
+            requirementContext,
+            cancellationToken);
 
-            // Step 3: Generate project structure
-            UpdateProgress("Creating project structure", "Mapping components to files and directories");
-            _logger.LogInformation("Architecture generated successfully. Creating Project Structure...");
+        ReportArchitecturalPatterns(architectureBlueprint);
+        ReportComponents(architectureBlueprint);
 
-            var projectStructure = await _projectStructureGeneratorService.GenerateProjectStructureAsync(
-                architectureBlueprint,
-                cancellationToken);
+        // Update the result with architecture metrics
+        result.Components = architectureBlueprint.Components?.Count ?? 0;
+        result.ArchitecturePatterns = architectureBlueprint.ArchitecturePatterns?.Count ?? 0;
 
-            var files = GetProjectFiles(projectStructure);
+        UpdateProgress("Designing architecture", "Architecture blueprint complete", 100,
+            $"Identified {result.Components} components using {result.ArchitecturePatterns} architectural patterns");
 
-            // Detalhes das pastas principais do projeto
-            if (projectStructure.RootDirectories != null && projectStructure.RootDirectories.Count > 0)
-            {
-                int dirCounter = 0;
-                foreach (var dir in projectStructure.RootDirectories)
-                {
-                    dirCounter++;
-                    string dirName = dir.Name;
-                    string dirDescription = dir.Description ?? "Directory for project components";
+        return architectureBlueprint;
+    }
 
-                    UpdateProgress("Creating project structure",
-                        $"Directory {dirCounter}/{projectStructure.RootDirectories.Count}: {dirName}",
-                        30 + (30 * dirCounter / Math.Max(1, projectStructure.RootDirectories.Count)),
-                        $"Purpose: {dirDescription.Substring(0, Math.Min(50, dirDescription.Length))}...");
-                }
-            }
+    /// <summary>
+    /// Step 3: Generates project structure based on architecture
+    /// </summary>
+    private async Task<ProjectStructure> GenerateProjectStructureAsync(
+        ArchitectureBlueprint architectureBlueprint,
+        CancellationToken cancellationToken,
+        BackforgeResult result)
+    {
+        using var _ = new LoggingStopwatch(_logger, "Project Structure Generation");
+        UpdateProgress("Creating project structure", "Mapping components to files and directories");
+        _logger.LogInformation("Architecture generated successfully with {ComponentCount} components. Creating Project Structure...", 
+            architectureBlueprint.Components?.Count ?? 0);
 
-            // Detalhes dos arquivos planejados
-            if (files != null && files.Count > 0)
-            {
-                int fileCounter = 0;
-                foreach (var file in
-                         files.Take(Math.Min(10, files.Count))) // Limitar a 10 arquivos para não sobrecarregar a saída
-                {
-                    fileCounter++;
-                    UpdateProgress("Creating project structure",
-                        $"File {fileCounter}/{Math.Min(10, files.Count)} of {files.Count}: {file.Name}",
-                        60 + (30 * fileCounter / Math.Min(10, files.Count)),
-                        $"Name: {file.Name}, Path: {file.Path}");
-                }
+        var projectStructure = await _projectStructureGeneratorService.GenerateProjectStructureAsync(
+            architectureBlueprint,
+            cancellationToken);
 
-                if (files.Count > 10)
-                {
-                    UpdateProgress("Creating project structure",
-                        $"Planning remaining {files.Count - 10} files",
-                        95,
-                        $"Planning additional files...");
-                }
-            }
+        var files = GetProjectFiles(projectStructure);
 
-            result.PlannedFiles = files.Count;
-            result.PlannedDirectories = projectStructure.RootDirectories?.Count ?? 0;
+        ReportDirectories(projectStructure);
+        ReportFiles(files);
 
-            UpdateProgress("Creating project structure", "Project structure defined", 100,
-                $"Created structure with {result.PlannedDirectories} directories and {result.PlannedFiles} files");
+        // Update the result with structure metrics
+        result.PlannedFiles = files.Count;
+        result.PlannedDirectories = projectStructure.RootDirectories?.Count ?? 0;
 
-            // Step 4: Initialize project
-            UpdateProgress("Initializing project", "Setting up project directories and base files");
-            _logger.LogInformation("Project structure generated successfully. Initializing project...");
+        UpdateProgress("Creating project structure", "Project structure defined", 100,
+            $"Created structure with {result.PlannedDirectories} directories and {result.PlannedFiles} files");
 
-            var initializationResult = await _projectInitializerService.InitializeProjectAsync(
-                architectureBlueprint,
-                projectStructure,
-                outputDirectory,
-                cancellationToken);
+        return projectStructure;
+    }
 
-            result.ProjectName = initializationResult.ProjectDirectory;
-            result.InitializedFiles = result.PlannedFiles;
+    /// <summary>
+    /// Step 4: Initializes the project on disk
+    /// </summary>
+    private async Task<ProjectInitializationResult> InitializeProjectAsync(
+        ArchitectureBlueprint architectureBlueprint,
+        ProjectStructure projectStructure,
+        string outputDirectory,
+        CancellationToken cancellationToken,
+        BackforgeResult result)
+    {
+        using var _ = new LoggingStopwatch(_logger, "Project Initialization");
+        UpdateProgress("Initializing project", "Setting up project directories and base files");
+        _logger.LogInformation("Project structure generated successfully with {FileCount} files. Initializing project in {Directory}...", 
+            result.PlannedFiles, outputDirectory);
 
-            UpdateProgress("Initializing project", "Project scaffold created", 100,
-                $"Created project scaffold at {result.ProjectName}");
+        var initializationResult = await _projectInitializerService.InitializeProjectAsync(
+            architectureBlueprint,
+            projectStructure,
+            outputDirectory,
+            cancellationToken);
 
-            // Step 5: Subscribe to file generation tracker events
-            _fileTrackerService.FileGenerated += OnFileGenerated;
+        // Update the result with initialization metrics
+        result.ProjectName = initializationResult.ProjectDirectory;
+        result.InitializedFiles = initializationResult.InitializationSteps?.Count ?? 0;
 
-            // Step 6: Generate project implementation
+        UpdateProgress("Initializing project", "Project scaffold created", 100,
+            $"Created project scaffold at {result.ProjectName} with {result.InitializedFiles} initialized files");
+
+        return initializationResult;
+    }
+
+    /// <summary>
+    /// Step 5: Generates the actual implementation code
+    /// </summary>
+    private async Task<ProjectImplementation> GenerateImplementationAsync(
+        AnalysisContext requirementContext,
+        ArchitectureBlueprint architectureBlueprint,
+        ProjectStructure projectStructure,
+        CancellationToken cancellationToken,
+        BackforgeResult result)
+    {
+        using var _ = new LoggingStopwatch(_logger, "Implementation Generation");
+        // Subscribe to file generation events to report progress
+        _fileTrackerService.FileGenerated += OnFileGenerated;
+
+        try
+        {
             UpdateProgress("Generating code implementation", "Creating initial implementation");
-            _logger.LogInformation("Project initialized successfully. Generating implementation...");
+            _logger.LogInformation("Project initialized successfully. Generating implementation code for {ComponentCount} components...", 
+                architectureBlueprint.Components?.Count ?? 0);
 
             var projectResult = await _projectCodeGenerationService.GenerateProjectImplementationAsync(
                 requirementContext,
@@ -246,56 +277,296 @@ public class BackforgeService
                 projectStructure,
                 cancellationToken);
 
-            // Unsubscribe from events
-            _fileTrackerService.FileGenerated -= OnFileGenerated;
-
-            result.GeneratedFiles = projectResult.GeneratedFiles.Count;
-            result.SuccessfulBuild = projectResult.MetaData.TryGetValue("FinalCompletenessScore", out var score) &&
-                                     double.TryParse(score, out var completenessScore) &&
-                                     completenessScore > 0.9;
-
-            // Calcular score de qualidade (se disponível)
-            double qualityScore = 0;
-            if (projectResult.MetaData.TryGetValue("FinalCompletenessScore", out var scoreStr) &&
-                double.TryParse(scoreStr, out qualityScore))
-            {
-                // Converter para uma escala de 0-100
-                result.CodeQualityScore = qualityScore * 100;
-            }
-            else
-            {
-                // Cálculo alternativo
-                result.CodeQualityScore = Math.Min(100,
-                    (double)result.GeneratedFiles / Math.Max(1, result.PlannedFiles) * 100);
-            }
-
-            UpdateProgress("Finalizing project", "Project implementation complete", 100);
-
-            // Final update
-            UpdateProgress("Completed", "Project successfully generated", 100,
-                $"Project generated with {result.GeneratedFiles} files and {result.Components} components");
-
-            _logger.LogInformation("Project implementation generated successfully. {ProjectResult}", projectResult);
-
-            result.Success = true;
-            return result;
+            return projectResult;
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "Error during execution: {ErrorMessage}", ex.Message);
-
-            // Clean up event handler if exception occurs
+            // Always unsubscribe to prevent memory leaks
             _fileTrackerService.FileGenerated -= OnFileGenerated;
-
-            // Report error in progress
-            UpdateProgress("Error", ex.Message, -1, "An error occurred during project generation.");
-
-            result.Success = false;
-            result.ErrorMessage = ex.Message;
-            return result;
         }
     }
 
+    #endregion
+
+    #region Progress Reporting Methods
+
+    private void ReportEntities(AnalysisContext requirementContext)
+    {
+        if (requirementContext.ExtractedEntities?.Count > 0)
+        {
+            int entityCounter = 0;
+            foreach (var entity in requirementContext.ExtractedEntities.Take(MaxFilesToReport))
+            {
+                entityCounter++;
+                int progressPercentage = 35 + (20 * entityCounter / Math.Min(MaxFilesToReport, requirementContext.ExtractedEntities.Count));
+                UpdateProgress("Analyzing requirements",
+                    $"Entity {entityCounter}/{requirementContext.ExtractedEntities.Count}: {entity}",
+                    progressPercentage);
+            }
+            
+            if (requirementContext.ExtractedEntities.Count > MaxFilesToReport)
+            {
+                UpdateProgress("Analyzing requirements",
+                    $"Processing {requirementContext.ExtractedEntities.Count - MaxFilesToReport} additional entities",
+                    55);
+            }
+        }
+    }
+
+    private void ReportInferredRequirements(AnalysisContext requirementContext)
+    {
+        if (requirementContext.InferredRequirements?.Count > 0)
+        {
+            int requirementCounter = 0;
+            foreach (var req in requirementContext.InferredRequirements.Take(MaxFilesToReport))
+            {
+                requirementCounter++;
+                int progressPercentage = 60 + (20 * requirementCounter / Math.Min(MaxFilesToReport, requirementContext.InferredRequirements.Count));
+                UpdateProgress("Analyzing requirements",
+                    $"Requirement {requirementCounter}/{requirementContext.InferredRequirements.Count}: {req}",
+                    progressPercentage);
+            }
+            
+            if (requirementContext.InferredRequirements.Count > MaxFilesToReport)
+            {
+                UpdateProgress("Analyzing requirements",
+                    $"Processing {requirementContext.InferredRequirements.Count - MaxFilesToReport} additional requirements",
+                    80);
+            }
+        }
+    }
+
+    private void ReportArchitecturalPatterns(ArchitectureBlueprint architectureBlueprint)
+    {
+        if (architectureBlueprint.ArchitecturePatterns?.Count > 0)
+        {
+            int patternCounter = 0;
+            foreach (var pattern in architectureBlueprint.ArchitecturePatterns)
+            {
+                patternCounter++;
+                string patternName = pattern.ToString();
+                int progressPercentage = 30 + (30 * patternCounter / Math.Max(1, architectureBlueprint.ArchitecturePatterns.Count));
+                UpdateProgress("Designing architecture",
+                    $"Pattern {patternCounter}/{architectureBlueprint.ArchitecturePatterns.Count}: {patternName}",
+                    progressPercentage);
+            }
+        }
+    }
+
+    private void ReportComponents(ArchitectureBlueprint architectureBlueprint)
+    {
+        if (architectureBlueprint.Components?.Count > 0)
+        {
+            int componentCounter = 0;
+            foreach (var component in architectureBlueprint.Components.Take(MaxFilesToReport))
+            {
+                componentCounter++;
+                string componentName = component.ToString();
+                int progressPercentage = 60 + (30 * componentCounter / Math.Min(MaxFilesToReport, architectureBlueprint.Components.Count));
+                UpdateProgress("Designing architecture",
+                    $"Component {componentCounter}/{architectureBlueprint.Components.Count}: {componentName}",
+                    progressPercentage);
+            }
+            
+            if (architectureBlueprint.Components.Count > MaxFilesToReport)
+            {
+                UpdateProgress("Designing architecture",
+                    $"Processing {architectureBlueprint.Components.Count - MaxFilesToReport} additional components",
+                    90);
+            }
+        }
+    }
+
+    private void ReportDirectories(ProjectStructure projectStructure)
+    {
+        if (projectStructure.RootDirectories?.Count > 0)
+        {
+            int dirCounter = 0;
+            foreach (var dir in projectStructure.RootDirectories)
+            {
+                dirCounter++;
+                string dirName = dir.Name;
+                string dirDescription = dir.Description ?? "Directory for project components";
+                string truncatedDescription = dirDescription.Length > 50 
+                    ? $"{dirDescription.Substring(0, 50)}..." 
+                    : dirDescription;
+                    
+                int progressPercentage = 30 + (30 * dirCounter / Math.Max(1, projectStructure.RootDirectories.Count));
+
+                UpdateProgress("Creating project structure",
+                    $"Directory {dirCounter}/{projectStructure.RootDirectories.Count}: {dirName}",
+                    progressPercentage,
+                    $"Purpose: {truncatedDescription}");
+            }
+        }
+    }
+
+    private void ReportFiles(List<ProjectFile> files)
+    {
+        if (files?.Count > 0)
+        {
+            int fileCount = Math.Min(MaxFilesToReport, files.Count);
+            int fileCounter = 0;
+
+            foreach (var file in files.Take(fileCount))
+            {
+                fileCounter++;
+                int progressPercentage = 60 + (30 * fileCounter / fileCount);
+                UpdateProgress("Creating project structure",
+                    $"File {fileCounter}/{fileCount} of {files.Count}: {file.Name}",
+                    progressPercentage,
+                    $"Path: {file.Path ?? "N/A"}");
+            }
+
+            if (files.Count > MaxFilesToReport)
+            {
+                UpdateProgress("Creating project structure",
+                    $"Planning remaining {files.Count - MaxFilesToReport} files",
+                    95,
+                    "Planning additional files...");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Finalizes the project result and calculates metrics
+    /// </summary>
+    private void FinalizeResult(ProjectImplementation projectResult, BackforgeResult result)
+    {
+        result.GeneratedFiles = projectResult.GeneratedFiles?.Count ?? 0;
+
+        CalculateSuccessStatus(projectResult, result);
+        CalculateQualityScore(projectResult, result);
+
+        UpdateProgress("Finalizing project", "Project implementation complete", 100);
+        UpdateProgress("Completed", "Project successfully generated", 100,
+            $"Project generated with {result.GeneratedFiles} files and {result.Components} components");
+
+        _logger.LogInformation("Project implementation completed with {FileCount} files. Quality score: {QualityScore}/100",
+            result.GeneratedFiles, result.CodeQualityScore);
+
+        result.Success = true;
+    }
+
+    private void CalculateSuccessStatus(ProjectImplementation projectResult, BackforgeResult result)
+    {
+        if (projectResult.MetaData != null && 
+            projectResult.MetaData.TryGetValue(CompletionScoreKey, out var score) &&
+            double.TryParse(score, out var completenessScore))
+        {
+            result.SuccessfulBuild = completenessScore > SuccessThreshold;
+        }
+        else
+        {
+            result.SuccessfulBuild = result.GeneratedFiles > 0;
+        }
+    }
+
+    private void CalculateQualityScore(ProjectImplementation projectResult, BackforgeResult result)
+    {
+        if (projectResult.MetaData != null && 
+            projectResult.MetaData.TryGetValue(CompletionScoreKey, out var scoreStr) &&
+            double.TryParse(scoreStr, out var qualityScore))
+        {
+            // Convert to 0-100 scale
+            result.CodeQualityScore = Math.Min(100, qualityScore * 100);
+        }
+        else
+        {
+            // Alternative calculation based on file completion rate
+            double completionRate = result.PlannedFiles > 0 
+                ? (double)result.GeneratedFiles / result.PlannedFiles 
+                : 0;
+                
+            result.CodeQualityScore = Math.Min(100, completionRate * 100);
+        }
+    }
+
+    /// <summary>
+    /// Handles exceptions that occur during processing
+    /// </summary>
+    private BackforgeResult HandleException(Exception ex, BackforgeResult result)
+    {
+        _logger.LogError(ex, "Error during execution: {ErrorMessage}", ex.Message);
+
+        // Clean up event handler if exception occurs
+        _fileTrackerService.FileGenerated -= OnFileGenerated;
+
+        // Report error in progress
+        UpdateProgress("Error", ex.Message, -1, "An error occurred during project generation.");
+
+        result.Success = false;
+        result.ErrorMessage = ex.Message;
+        return result;
+    }
+    
+    /// <summary>
+    /// Handles cancellation of the operation
+    /// </summary>
+    private BackforgeResult CancelOperation(BackforgeResult result, string message)
+    {
+        _logger.LogWarning("Operation cancelled: {Message}", message);
+        
+        // Clean up event handler
+        _fileTrackerService.FileGenerated -= OnFileGenerated;
+        
+        // Report cancellation in progress
+        UpdateProgress("Cancelled", message, -1, "Operation was cancelled by user request.");
+        
+        result.Success = false;
+        result.ErrorMessage = message;
+        return result;
+    }
+
+    /// <summary>
+    /// Safe way to get files from project structure
+    /// </summary>
+    private List<ProjectFile> GetProjectFiles(ProjectStructure projectStructure)
+    {
+        // Try direct property access first (preferred approach)
+        var filesProperty = projectStructure.GetType().GetProperty("Files");
+        if (filesProperty != null)
+        {
+            var files = filesProperty.GetValue(projectStructure);
+            if (files is List<ProjectFile> projectFiles)
+            {
+                return projectFiles;
+            }
+        }
+
+        // Fallback - recursively collect files from directories
+        var allFiles = new List<ProjectFile>();
+        if (projectStructure.RootDirectories != null)
+        {
+            foreach (var dir in projectStructure.RootDirectories)
+            {
+                CollectFilesFromDirectory(dir, allFiles);
+            }
+        }
+        
+        return allFiles;
+    }
+    
+    /// <summary>
+    /// Helper to recursively collect files from directory structure
+    /// </summary>
+    private void CollectFilesFromDirectory(ProjectDirectory directory, List<ProjectFile> files)
+    {
+        // Add files from this directory
+        if (directory.Files != null)
+        {
+            files.AddRange(directory.Files);
+        }
+        
+        // Recursively process subdirectories
+        if (directory.Subdirectories != null)
+        {
+            foreach (var subdir in directory.Subdirectories)
+            {
+                CollectFilesFromDirectory(subdir, files);
+            }
+        }
+    }
 
     /// <summary>
     /// Event handler for file generation events
@@ -313,52 +584,32 @@ public class BackforgeService
     }
 
     /// <summary>
-    /// Gets the files from the project structure using a compatible approach
-    /// </summary>
-    private List<ProjectFile> GetProjectFiles(ProjectStructure projectStructure)
-    {
-        // Use reflection to access the Files property if it exists
-        var filesProperty = projectStructure.GetType().GetProperty("Files");
-        if (filesProperty != null)
-        {
-            var files = filesProperty.GetValue(projectStructure);
-            if (files is List<ProjectFile> projectFiles)
-            {
-                return projectFiles;
-            }
-        }
-
-        // Alternative approach - check for directories
-        return projectStructure.RootDirectories != null ? new List<ProjectFile>() : new List<ProjectFile>();
-    }
-
-    /// <summary>
     /// Updates the progress of the operation with enhanced information
     /// </summary>
     private void UpdateProgress(string phase, string activity, int percentComplete = -1, string detail = null)
     {
-        // Incrementa o contador de passos apenas se não estivermos atualizando o mesmo passo
+        // Increment step counter only if we're not updating the same step
         if (percentComplete < 0 || percentComplete == 100)
         {
             _currentStep++;
         }
 
         double overallProgress = percentComplete >= 0
-            ? percentComplete / 100.0
-            : Math.Min(1.0, (double)_currentStep / _totalSteps);
+            ? (double)Math.Min(100, Math.Max(0, percentComplete)) / 100.0
+            : Math.Min(1.0, (double)_currentStep / TotalWorkflowSteps);
 
-        // Reporta o progresso
+        // Report progress
         _progress?.Report(new BackforgeProgressUpdate
         {
             Phase = phase,
             Activity = activity,
             Progress = overallProgress,
             Step = _currentStep,
-            TotalSteps = _totalSteps,
+            TotalSteps = TotalWorkflowSteps,
             Detail = detail
         });
 
-        // Registrar no log se houver detalhes importantes
+        // Log if there are important details
         if (!string.IsNullOrEmpty(detail))
         {
             _logger.LogInformation("{Phase} - {Activity}: {Detail}", phase, activity, detail);
@@ -374,7 +625,11 @@ public class BackforgeService
     /// </summary>
     private string FormatTimeRemaining(int secondsRemaining)
     {
-        if (secondsRemaining < 60)
+        if (secondsRemaining < 0)
+        {
+            return "Calculating...";
+        }
+        else if (secondsRemaining < 60)
         {
             return $"{secondsRemaining}s";
         }
@@ -387,168 +642,33 @@ public class BackforgeService
             return $"{secondsRemaining / 3600}h {(secondsRemaining % 3600) / 60}m";
         }
     }
+
+    #endregion
 }
 
 /// <summary>
-/// Represents a progress update from the Backforge service
+/// Helper class to log method execution time
 /// </summary>
-public class BackforgeProgressUpdate
+internal class LoggingStopwatch : IDisposable
 {
-    /// <summary>
-    /// The current phase of the operation (e.g., "Analyzing Requirements")
-    /// </summary>
-    public string Phase { get; set; }
+    private readonly ILogger _logger;
+    private readonly string _operationName;
+    private readonly DateTime _startTime;
 
-    /// <summary>
-    /// The specific activity being performed (e.g., "Extracting entities")
-    /// </summary>
-    public string Activity { get; set; }
-
-    /// <summary>
-    /// Progress as a value between 0.0 and 1.0
-    /// </summary>
-    public double Progress { get; set; }
-
-    /// <summary>
-    /// Current step number
-    /// </summary>
-    public int Step { get; set; }
-
-    /// <summary>
-    /// Total steps in the process
-    /// </summary>
-    public int TotalSteps { get; set; }
-
-    /// <summary>
-    /// Additional details about the current operation
-    /// </summary>
-    public string Detail { get; set; }
-
-    /// <summary>
-    /// Gets a formatted string representation of the progress
-    /// </summary>
-    public string FormattedProgress => $"{Math.Round(Progress * 100)}%";
-
-    /// <summary>
-    /// Gets the severity level for the current operation (for coloring)
-    /// </summary>
-    public LogLevel SeverityLevel
+    public LoggingStopwatch(ILogger logger, string operationName)
     {
-        get
-        {
-            if (Phase.Contains("Error", StringComparison.OrdinalIgnoreCase))
-                return LogLevel.Error;
-
-            if (Phase.Contains("Warning", StringComparison.OrdinalIgnoreCase))
-                return LogLevel.Warning;
-
-            return LogLevel.Information;
-        }
+        _logger = logger;
+        _operationName = operationName;
+        _startTime = DateTime.UtcNow;
+        
+        _logger.LogDebug("Starting operation: {OperationName}", _operationName);
     }
-}
 
-/// <summary>
-/// Represents the result of a Backforge operation
-/// </summary>
-public class BackforgeResult
-{
-    /// <summary>
-    /// Whether the operation was successful
-    /// </summary>
-    public bool Success { get; set; }
-
-    /// <summary>
-    /// Error message if the operation failed
-    /// </summary>
-    public string ErrorMessage { get; set; }
-
-    /// <summary>
-    /// Directory where the project was created
-    /// </summary>
-    public string OutputDirectory { get; set; }
-
-    /// <summary>
-    /// Name of the generated project
-    /// </summary>
-    public string ProjectName { get; set; }
-
-    /// <summary>
-    /// Number of entities extracted from requirements
-    /// </summary>
-    public int ExtractedEntities { get; set; }
-
-    /// <summary>
-    /// Number of inferred requirements
-    /// </summary>
-    public int InferredRequirements { get; set; }
-
-    /// <summary>
-    /// Number of relationships identified between entities
-    /// </summary>
-    public int RelationshipsIdentified { get; set; }
-
-    /// <summary>
-    /// Names of the primary entities extracted
-    /// </summary>
-    public List<string> PrimaryEntityNames { get; set; } = new List<string>();
-
-    /// <summary>
-    /// Types of the identified entities
-    /// </summary>
-    public Dictionary<string, string> EntityTypes { get; set; } = new Dictionary<string, string>();
-
-    /// <summary>
-    /// Number of architectural components
-    /// </summary>
-    public int Components { get; set; }
-
-    /// <summary>
-    /// Number of architectural patterns used
-    /// </summary>
-    public int ArchitecturePatterns { get; set; }
-
-    /// <summary>
-    /// Names of the architectural patterns used
-    /// </summary>
-    public List<string> PatternNames { get; set; } = new List<string>();
-
-    /// <summary>
-    /// Number of planned files in the project structure
-    /// </summary>
-    public int PlannedFiles { get; set; }
-
-    /// <summary>
-    /// Number of planned directories in the project structure
-    /// </summary>
-    public int PlannedDirectories { get; set; }
-
-    /// <summary>
-    /// Names of the primary directories created
-    /// </summary>
-    public List<string> PrimaryDirectories { get; set; } = new List<string>();
-
-    /// <summary>
-    /// Number of files initialized during project setup
-    /// </summary>
-    public int InitializedFiles { get; set; }
-
-    /// <summary>
-    /// Number of files generated during implementation
-    /// </summary>
-    public int GeneratedFiles { get; set; }
-
-    /// <summary>
-    /// Distribution of file types generated (e.g., C# classes, interfaces, etc.)
-    /// </summary>
-    public Dictionary<string, int> FileTypeDistribution { get; set; } = new Dictionary<string, int>();
-
-    /// <summary>
-    /// Whether the final build was successful
-    /// </summary>
-    public bool SuccessfulBuild { get; set; }
-
-    /// <summary>
-    /// The overall code quality score (0-100)
-    /// </summary>
-    public double CodeQualityScore { get; set; }
+    public void Dispose()
+    {
+        var duration = DateTime.UtcNow - _startTime;
+        _logger.LogInformation("Operation {OperationName} completed in {Duration}ms", 
+            _operationName, 
+            duration.TotalMilliseconds);
+    }
 }

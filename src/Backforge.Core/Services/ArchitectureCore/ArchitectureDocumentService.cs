@@ -74,7 +74,7 @@ public class ArchitectureDocumentService(
         ArchitectureBlueprint blueprint,
         CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Generating ADRs for blueprint {BlueprintId}", blueprint.BlueprintId);
+        _logger.LogInformation("Generating ADRs for blueprint {BlueprintId}", blueprint.BlueprintId);
 
         var patterns = FormatListForPrompt(blueprint.ArchitecturePatterns.Select(p => p.Name));
         var components = FormatListForPrompt(blueprint.Components.Take(5).Select(c => c.Name));
@@ -110,7 +110,7 @@ public class ArchitectureDocumentService(
         ArchitectureBlueprint blueprint,
         CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Generating component specifications for blueprint {BlueprintId}", blueprint.BlueprintId);
+        _logger.LogInformation("Generating component specifications for blueprint {BlueprintId}", blueprint.BlueprintId);
 
         var componentsJson = SerializeForPrompt(blueprint.Components.Select(c => new
         {
@@ -148,7 +148,7 @@ public class ArchitectureDocumentService(
         ArchitectureBlueprint blueprint,
         CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Generating interface contracts for blueprint {BlueprintId}", blueprint.BlueprintId);
+        _logger.LogInformation("Generating interface contracts for blueprint {BlueprintId}", blueprint.BlueprintId);
 
         var componentsForInterfaces = blueprint.Components.Select(c => new
         {
@@ -193,7 +193,7 @@ public class ArchitectureDocumentService(
         ArchitectureBlueprint blueprint,
         CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Generating deployment topology for blueprint {BlueprintId}", blueprint.BlueprintId);
+        _logger.LogInformation("Generating deployment topology for blueprint {BlueprintId}", blueprint.BlueprintId);
 
         var deploymentComponents = blueprint.Components.Select(c => new
         {

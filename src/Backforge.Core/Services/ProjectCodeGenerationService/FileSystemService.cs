@@ -36,7 +36,7 @@ public class FileSystemService : IFileSystemService
 
         Directory.CreateDirectory(projectDir);
 
-        _logger.LogDebug("Created temporary directory: {Directory}", projectDir);
+        _logger.LogInformation("Created temporary directory: {Directory}", projectDir);
 
         // Create all required subdirectories and files
         foreach (var file in implementation.GeneratedFiles)
@@ -51,7 +51,7 @@ public class FileSystemService : IFileSystemService
 
             // Write file content
             await File.WriteAllTextAsync(filePath, file.Content, cancellationToken);
-            _logger.LogDebug("Created file: {FilePath}", filePath);
+            _logger.LogInformation("Created file: {FilePath}", filePath);
         }
 
         return projectDir;
@@ -64,7 +64,7 @@ public class FileSystemService : IFileSystemService
     {
         if (!_cleanupTempDirectories)
         {
-            _logger.LogDebug("Skipping cleanup of temporary directory (cleanup disabled): {Directory}", directoryPath);
+            _logger.LogInformation("Skipping cleanup of temporary directory (cleanup disabled): {Directory}", directoryPath);
             return Task.CompletedTask;
         }
 
@@ -72,7 +72,7 @@ public class FileSystemService : IFileSystemService
         {
             if (Directory.Exists(directoryPath))
             {
-                _logger.LogDebug("Cleaning up temporary directory: {Directory}", directoryPath);
+                _logger.LogInformation("Cleaning up temporary directory: {Directory}", directoryPath);
                 Directory.Delete(directoryPath, true);
             }
         }

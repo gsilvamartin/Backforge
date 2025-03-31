@@ -137,7 +137,7 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
         var projectStructure =
             await _llamaService.GetStructuredResponseAsync<ProjectStructure>(prompt, cancellationToken);
 
-        _logger.LogDebug("Received iteration 1 structure with {DirectoryCount} root directories",
+        _logger.LogInformation("Received iteration 1 structure with {DirectoryCount} root directories",
             projectStructure.RootDirectories.Count);
 
         ProcessPaths(projectStructure, "");
@@ -195,7 +195,7 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
         var enhancedStructure =
             await _llamaService.GetStructuredResponseAsync<ProjectStructure>(prompt, cancellationToken);
 
-        _logger.LogDebug("Received iteration 2 structure with {DirectoryCount} root directories",
+        _logger.LogInformation("Received iteration 2 structure with {DirectoryCount} root directories",
             enhancedStructure.RootDirectories.Count);
 
         ProcessPaths(enhancedStructure, "");
@@ -257,7 +257,7 @@ public class ProjectStructureGeneratorService : IProjectStructureGeneratorServic
         var finalStructure =
             await _llamaService.GetStructuredResponseAsync<ProjectStructure>(prompt, cancellationToken);
 
-        _logger.LogDebug("Received iteration 3 structure with {DirectoryCount} root directories",
+        _logger.LogInformation("Received iteration 3 structure with {DirectoryCount} root directories",
             finalStructure.RootDirectories.Count);
 
         ProcessPaths(finalStructure, "");

@@ -58,7 +58,7 @@ namespace Backforge.Core.Services.ProjectCodeGenerationService
                 int currentCount = _generatedFiles.Count;
                 double progress = CalculateProgress();
 
-                _logger.LogDebug(
+                _logger.LogInformation(
                     "Tracked file generation: {FilePath}. {CurrentCount}/{TotalFiles} files generated ({Progress:P0})",
                     filePath, currentCount, _totalFiles, progress);
 

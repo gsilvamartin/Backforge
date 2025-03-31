@@ -69,7 +69,7 @@ public class CommandExecutor : ICommandExecutor
                 if (e.Data == null) return;
 
                 outputBuilder.AppendLine(e.Data);
-                _logger.LogDebug("Command output: {Output}", e.Data);
+                _logger.LogInformation("Command output: {Output}", e.Data);
             };
 
             process.ErrorDataReceived += (_, e) =>
@@ -353,7 +353,7 @@ public class CommandExecutor : ICommandExecutor
             if (e.Data == null) return;
 
             outputBuilder.AppendLine(e.Data);
-            _logger.LogDebug("Command output: {Output}", e.Data);
+            _logger.LogInformation("Command output: {Output}", e.Data);
         };
 
         process.ErrorDataReceived += (_, e) =>
